@@ -3,14 +3,7 @@ import yt_dlp
 import uuid
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    MessageHandler,
-    CallbackQueryHandler,
-    ContextTypes,
-    filters
-)
+from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
 
 TOKEN = os.getenv("BOT_TOKEN")
 
@@ -64,7 +57,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["url"] = text
     await update.message.reply_text(TEXT[lang]["choose"], reply_markup=type_kb)
 
-# ---------------- DOWNLOAD ---------------- #
+# ---------------- DOWNLOAD CORE ---------------- #
 
 def download(url, mode):
     file_id = str(uuid.uuid4())
@@ -73,6 +66,17 @@ def download(url, mode):
         "outtmpl": f"{file_id}.%(ext)s",
         "noplaylist": True,
         "quiet": True,
+
+        # 🔥 مهم جدًا لحل مشاكل يوتيوب
+        "format": "bestvideo+bestaudio/best",
+        "merge_output_format": "mp4",
+
+        # 🔥 محاولة تقليل bot detection
+        "extractor_args": {
+            "youtube": {
+                "player_client": ["android", "web"]
+            }
+        }
     }
 
     if mode == "mp3":
@@ -81,11 +85,9 @@ def download(url, mode):
             "postprocessors": [{
                 "key": "FFmpegExtractAudio",
                 "preferredcodec": "mp3",
-                "preferredquality": "192",
+                "preferredquality": "192"
             }]
         })
-    else:
-        ydl_opts["format"] = "best"
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         ydl.download([url])
@@ -101,7 +103,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = q.data
     url = context.user_data.get("url")
 
-    # 🌍 LANGUAGE
+    # 🌍 language
     if data.startswith("lang_"):
         lang = data.split("_")[1]
         context.user_data["lang"] = lang
@@ -117,20 +119,16 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         file_id = download(url, data)
 
-        # 🎵 MP3
         if data == "mp3":
             path = f"{file_id}.mp3"
-            with open(path, "rb") as f:
-                await q.message.reply_document(f)
-
-        # 🎬 VIDEO
         else:
             path = f"{file_id}.mp4"
-            with open(path, "rb") as f:
-                await q.message.reply_document(f)
+
+        with open(path, "rb") as f:
+            await q.message.reply_document(f)
 
     except Exception as e:
-        await q.message.edit_text(f"❌ Error:\n{e}")
+        await q.message.edit_text(f"❌ YouTube Error:\n{e}")
 
 # ---------------- MAIN ---------------- #
 
