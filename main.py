@@ -3,44 +3,46 @@ from telegram.ext import Application, CommandHandler, CallbackQueryHandler, Mess
 import yt_dlp
 import os
 import requests
-from openai import OpenAI
+import google.generativeai as genai
 
+# ================= KEYS =================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-client = OpenAI(api_key=OPENAI_API_KEY)
+# ================= GEMINI SETUP =================
+genai.configure(api_key=GEMINI_API_KEY)
+model = genai.GenerativeModel("gemini-1.5-flash")
 
-# ================= USER STATE =================
+# ================= STATE =================
 user_state = {}
 
 # ================= AI =================
 async def ai_reply(text):
     try:
-        res = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": "انت مساعد داخل بوت تيليجرام وترد بشكل بسيط."},
-                {"role": "user", "content": text}
-            ]
-        )
-        return res.choices[0].message.content
+        if not GEMINI_API_KEY:
+            return "❌ GEMINI API KEY مش موجود"
+
+        response = model.generate_content(text)
+        return response.text
+
     except Exception as e:
-        print("AI ERROR:", e)
+        print("GEMINI ERROR:", e)
         return "❌ AI مش شغال حالياً"
 
 
-# ================= MAIN MENU =================
-def main_menu():
+# ================= MENUS =================
+def lang_menu():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔎 Search YouTube", callback_data="search_mode")],
-        [InlineKeyboardButton("🤖 AI Chat", callback_data="ai_mode")]
+        [InlineKeyboardButton("🇪🇬 عربي", callback_data="lang_ar")],
+        [InlineKeyboardButton("🇺🇸 English", callback_data="lang_en")]
     ])
 
 
-def back_home():
+def main_menu():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🏠 Home", callback_data="home")]
+        [InlineKeyboardButton("🔎 Search YouTube", callback_data="search")],
+        [InlineKeyboardButton("🤖 AI Chat", callback_data="ai")]
     ])
 
 
@@ -49,42 +51,43 @@ def quality_menu():
         [InlineKeyboardButton("1080p", callback_data="q_1080")],
         [InlineKeyboardButton("720p", callback_data="q_720")],
         [InlineKeyboardButton("🎵 MP3", callback_data="mp3")],
-        [InlineKeyboardButton("⬅ Back", callback_data="home")]
+        [InlineKeyboardButton("🏠 Home", callback_data="home")]
     ])
 
 
 # ================= START =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_state.clear()
-
-    await update.message.reply_text(
-        "🌍 Welcome\n\nاختر من القائمة:",
-        reply_markup=main_menu()
-    )
+    await update.message.reply_text("🌍 اختر اللغة", reply_markup=lang_menu())
 
 
-# ================= BUTTON HANDLER =================
+# ================= BUTTONS =================
 async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
     uid = q.from_user.id
 
-    # HOME
-    if q.data == "home":
+    # LANGUAGE
+    if q.data.startswith("lang_"):
         user_state[uid] = {"mode": "menu"}
         await q.message.edit_text("🏠 Main Menu", reply_markup=main_menu())
 
+    # HOME
+    elif q.data == "home":
+        user_state[uid]["mode"] = "menu"
+        await q.message.edit_text("🏠 Main Menu", reply_markup=main_menu())
+
     # SEARCH MODE
-    elif q.data == "search_mode":
-        user_state[uid] = {"mode": "search"}
+    elif q.data == "search":
+        user_state[uid]["mode"] = "search"
         await q.message.edit_text("🔎 ابعت اسم الفيديو")
 
     # AI MODE
-    elif q.data == "ai_mode":
-        user_state[uid] = {"mode": "ai"}
+    elif q.data == "ai":
+        user_state[uid]["mode"] = "ai"
         await q.message.edit_text("🤖 ابعت سؤالك")
 
-    # DOWNLOAD QUALITY
+    # DOWNLOAD
     elif q.data.startswith("q_") or q.data == "mp3":
         url = user_state.get(uid, {}).get("url")
 
@@ -123,22 +126,21 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         os.remove(path)
 
 
-# ================= MESSAGE HANDLER =================
+# ================= MESSAGES =================
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     uid = update.effective_user.id
 
     if uid not in user_state:
-        user_state[uid] = {"mode": "menu"}
-        await update.message.reply_text("🏠 Main Menu", reply_markup=main_menu())
+        await update.message.reply_text("🌍 اختار اللغة الأول", reply_markup=lang_menu())
         return
 
     mode = user_state[uid]["mode"]
 
-    # ================= AI MODE =================
+    # ================= AI =================
     if mode == "ai":
         reply = await ai_reply(text)
-        await update.message.reply_text(reply, reply_markup=back_home())
+        await update.message.reply_text(reply)
         return
 
     # ================= LINK =================
@@ -147,9 +149,8 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("🎯 اختر الجودة", reply_markup=quality_menu())
         return
 
-    # ================= SEARCH MODE =================
+    # ================= SEARCH =================
     if mode == "search":
-
         try:
             r = requests.get("https://www.googleapis.com/youtube/v3/search", params={
                 "part": "snippet",
@@ -161,32 +162,4 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             data = r.json()
 
-            message = f'📋┃نتائج البحث عن "{text}"\n\n'
-
-            for item in data["items"]:
-                vid = item["id"]["videoId"]
-                title = item["snippet"]["title"]
-                channel = item["snippet"]["channelTitle"]
-
-                message += f"""🎬 {title}
-👤 {channel}
-🔗 /dl_{vid}
-
-"""
-
-            await update.message.reply_text(message, reply_markup=back_home())
-
-        except Exception as e:
-            print(e)
-            await update.message.reply_text("Search error ❌")
-
-
-# ================= APP =================
-app = Application.builder().token(BOT_TOKEN).build()
-
-app.add_handler(CommandHandler("start", start))
-app.add_handler(CallbackQueryHandler(buttons))
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
-
-print("Bot Running...")
-app.run_polling()
+            msg
