@@ -1,13 +1,31 @@
 import os
 import yt_dlp
-import logging
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
 
 TOKEN = os.getenv("BOT_TOKEN")
 
-logging.basicConfig(level=logging.INFO)
+# ---------------- LANGUAGE ---------------- #
+
+TEXTS = {
+    "ar": {
+        "choose_lang": "🌍 اختار اللغة",
+        "send": "🔎 ابعت اسم فيديو أو رابط",
+        "type": "🎥 Video ولا MP3؟",
+        "quality": "🎬 اختار الجودة",
+        "downloading": "⏳ جاري التحميل...",
+        "error": "❌ حصل خطأ"
+    },
+    "en": {
+        "choose_lang": "🌍 Choose language",
+        "send": "🔎 Send video name or link",
+        "type": "🎥 Video or MP3?",
+        "quality": "🎬 Choose quality",
+        "downloading": "⏳ Downloading...",
+        "error": "❌ Error happened"
+    }
+}
 
 # ---------------- KEYBOARDS ---------------- #
 
@@ -35,83 +53,41 @@ quality_kb = InlineKeyboardMarkup([
     ]
 ])
 
-# ---------------- SEARCH (STABLE) ---------------- #
+# ---------------- SEARCH ---------------- #
 
 def search_youtube(query):
-    ydl_opts = {
-        "quiet": True,
-        "no_warnings": True,
-        "extract_flat": True,
-        "skip_download": True,
-    }
-
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(f"ytsearch5:{query}", download=False)
-
-    return info.get("entries", [])
-
-# ---------------- DOWNLOAD ---------------- #
-
-def download(url, mode, quality=None):
-    ydl_opts = {
-        "outtmpl": "video.%(ext)s",
-        "quiet": True,
-        "nocheckcertificate": True,
-        "geo_bypass": True,
-        "format": "bestvideo+bestaudio/best",
-    }
-
-    if mode == "mp3":
-        ydl_opts.update({
-            "format": "bestaudio/best",
-            "postprocessors": [{
-                "key": "FFmpegExtractAudio",
-                "preferredcodec": "mp3",
-            }]
-        })
-    else:
-        ydl_opts["format"] = f"best[height<={quality}]/best"
-
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        ydl.download([url])
+    with yt_dlp.YoutubeDL({"quiet": True}) as ydl:
+        return ydl.extract_info(f"ytsearch5:{query}", download=False)["entries"]
 
 # ---------------- START ---------------- #
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "🌍 اختار اللغة",
-        reply_markup=lang_kb
-    )
+    await update.message.reply_text(TEXTS["ar"]["choose_lang"], reply_markup=lang_kb)
 
 # ---------------- MESSAGE ---------------- #
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
+    lang = context.user_data.get("lang", "ar")
 
-    # 🔎 SEARCH MODE
     if "http" not in text:
         try:
             results = search_youtube(text)
             context.user_data["results"] = results
 
-            msg = f'📋┃نتائج البحث عن "{text}"\n\n'
-
+            msg = f'📋 {text}\n\n'
             for i, r in enumerate(results):
-                msg += (
-                    f"🎬 {r.get('title')}\n"
-                    f"🔗 /v{i}\n\n"
-                )
+                msg += f"🎬 {r['title']}\n🎯 /v{i}\n\n"
 
             await update.message.reply_text(msg)
 
-        except Exception as e:
-            await update.message.reply_text(f"❌ Search error: {e}")
+        except:
+            await update.message.reply_text(TEXTS[lang]["error"])
 
         return
 
-    # 🔗 LINK MODE
     context.user_data["url"] = text
-    await update.message.reply_text("🎥 Video ولا MP3؟", reply_markup=type_kb)
+    await update.message.reply_text(TEXTS[lang]["type"], reply_markup=type_kb)
 
 # ---------------- SELECT VIDEO ---------------- #
 
@@ -122,22 +98,44 @@ async def select_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     try:
-        index = int(text.replace("/v", ""))
-        results = context.user_data.get("results")
+        i = int(text.replace("/v", ""))
+        video = context.user_data["results"][i]
 
-        if not results:
-            return await update.message.reply_text("❌ اعمل بحث الأول")
-
-        video = results[index]
-        context.user_data["url"] = video["url"]
+        context.user_data["url"] = video["webpage_url"]
 
         await update.message.reply_text(
-            f"🎬 {video['title']}\n\nاختار الجودة:",
+            TEXTS[context.user_data.get("lang","ar")]["quality"],
             reply_markup=quality_kb
         )
 
     except:
         await update.message.reply_text("❌ Error")
+
+# ---------------- DOWNLOAD CORE ---------------- #
+
+def download(url, mode, quality=None):
+    ydl_opts = {
+        "outtmpl": "video.%(ext)s",
+        "quiet": True,
+        "noplaylist": True,
+    }
+
+    # 🎵 MP3
+    if mode == "mp3":
+        ydl_opts.update({
+            "format": "bestaudio/best",
+            "postprocessors": [{
+                "key": "FFmpegExtractAudio",
+                "preferredcodec": "mp3",
+            }]
+        })
+
+    # 🎬 VIDEO QUALITY (REAL FIX)
+    else:
+        ydl_opts["format"] = f"bestvideo[height<={quality}]+bestaudio/best[height<={quality}]"
+
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        ydl.download([url])
 
 # ---------------- CALLBACK ---------------- #
 
@@ -147,17 +145,20 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     data = q.data
     url = context.user_data.get("url")
+    lang = context.user_data.get("lang", "ar")
 
+    # 🌍 LANGUAGE FIX
     if data.startswith("lang"):
-        return await q.message.edit_text("🔎 ابعت اسم فيديو أو رابط")
+        context.user_data["lang"] = data.split("_")[1]
+        return await q.message.edit_text(TEXTS[context.user_data["lang"]]["send"])
 
     if not url:
-        return await q.message.reply_text("ابعت فيديو الأول")
+        return await q.message.reply_text("❌ No video")
+
+    msg = await q.message.edit_text(TEXTS[lang]["downloading"])
 
     # 🎵 MP3
     if data == "mp3":
-        await q.message.edit_text("⏳ جاري تحميل MP3...")
-
         download(url, "mp3")
 
         with open("video.mp3", "rb") as f:
@@ -169,8 +170,6 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data.startswith("q_"):
         quality = data.split("_")[1]
 
-        await q.message.edit_text(f"⏳ جاري التحميل {quality}p...")
-
         download(url, "video", quality)
 
         with open("video.mp4", "rb") as f:
@@ -180,11 +179,11 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # 🎬 TYPE
     if data in ["video", "mp3"]:
-        if data == "video":
-            await q.message.edit_text("🎥 اختار الجودة:", reply_markup=quality_kb)
-        else:
-            await q.message.edit_text("⏳ جاري التحميل MP3...")
+        context.user_data["mode"] = data
 
+        if data == "video":
+            await q.message.edit_text(TEXTS[lang]["quality"], reply_markup=quality_kb)
+        else:
             download(url, "mp3")
 
             with open("video.mp3", "rb") as f:
@@ -193,9 +192,6 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ---------------- MAIN ---------------- #
 
 def main():
-    if not TOKEN:
-        raise Exception("BOT_TOKEN missing")
-
     app = Application.builder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
