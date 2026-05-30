@@ -6,24 +6,19 @@ import os
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 user_data = {}
+search_cache = {}
 
 os.makedirs("downloads", exist_ok=True)
 
 
-# ================= START =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [InlineKeyboardButton("🇪🇬 عربي", callback_data="ar")],
         [InlineKeyboardButton("🇺🇸 English", callback_data="en")]
     ]
-
-    await update.message.reply_text(
-        "اختار اللغة 🌍",
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
+    await update.message.reply_text("اختار اللغة 🌍", reply_markup=InlineKeyboardMarkup(keyboard))
 
 
-# ================= LANGUAGE =================
 async def language(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -35,28 +30,41 @@ async def language(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("Instagram 📸", callback_data="ig")]
     ]
 
-    await query.edit_message_text(
-        "اختار المنصة 📱",
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
+    await query.edit_message_text("اختار المنصة 📱", reply_markup=InlineKeyboardMarkup(keyboard))
 
 
-# ================= PLATFORM =================
 async def platform(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
-    user_data[query.from_user.id] = {}
+    user_data[query.from_user.id] = {"platform": query.data}
 
-    await query.edit_message_text("ابعت اللينك 🔗")
+    await query.edit_message_text("ابعت لينك أو كلمة بحث 🔎")
 
 
-# ================= MESSAGE =================
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def youtube_search(update: Update, context: ContextTypes.DEFAULT_TYPE, text):
+    with yt_dlp.YoutubeDL({"quiet": True}) as ydl:
+        result = ydl.extract_info(f"ytsearch5:{text}", download=False)
+
+    search_cache[update.message.from_user.id] = result["entries"]
+
+    keyboard = [
+        [InlineKeyboardButton(v["title"][:50], callback_data=f"vid_{i}")]
+        for i, v in enumerate(result["entries"])
+    ]
+
+    await update.message.reply_text("🔎 نتائج البحث:", reply_markup=InlineKeyboardMarkup(keyboard))
+
+
+async def message_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     text = update.message.text
 
     if user_id not in user_data:
+        return
+
+    if user_data[user_id]["platform"] == "yt" and not text.startswith("http"):
+        await youtube_search(update, context, text)
         return
 
     user_data[user_id]["url"] = text
@@ -69,23 +77,36 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🎵 MP3", callback_data="mp3")]
     ]
 
-    await update.message.reply_text(
-        "اختار الجودة 🎯",
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
+    await update.message.reply_text("اختار الجودة 🎯", reply_markup=InlineKeyboardMarkup(keyboard))
 
 
-# ================= GET OPTIONS =================
-def get_ydl_opts(quality=None, mp3=False):
+async def select_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    user_id = query.from_user.id
+    index = int(query.data.split("_")[1])
+
+    video = search_cache[user_id][index]
+    user_data[user_id]["url"] = video["webpage_url"]
+
+    keyboard = [
+        [InlineKeyboardButton("1080p", callback_data="q_1080")],
+        [InlineKeyboardButton("720p", callback_data="q_720")],
+        [InlineKeyboardButton("480p", callback_data="q_480")],
+        [InlineKeyboardButton("360p", callback_data="q_360")],
+        [InlineKeyboardButton("🎵 MP3", callback_data="mp3")]
+    ]
+
+    await query.edit_message_text("اختار الجودة 🎯", reply_markup=InlineKeyboardMarkup(keyboard))
+
+
+def get_opts(quality=None, mp3=False):
     opts = {
         "outtmpl": "downloads/%(title)s.%(ext)s",
         "noplaylist": True,
-        "quiet": True,
+        "quiet": True
     }
-
-    # 🔥 cookies fix
-    if os.path.exists("cookies.txt"):
-        opts["cookiefile"] = "cookies.txt"
 
     if mp3:
         opts["format"] = "bestaudio/best"
@@ -93,10 +114,12 @@ def get_ydl_opts(quality=None, mp3=False):
         opts["format"] = f"bestvideo[height<={quality}]+bestaudio/best"
         opts["merge_output_format"] = "mp4"
 
+    if os.path.exists("cookies.txt"):
+        opts["cookiefile"] = "cookies.txt"
+
     return opts
 
 
-# ================= DOWNLOAD =================
 async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -107,32 +130,15 @@ async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await query.edit_message_text("⏳ جاري التحميل...")
 
-    mp3 = False
-    quality = None
-
-    if choice == "mp3":
-        mp3 = True
-    else:
-        quality = choice.split("_")[1]
+    mp3 = choice == "mp3"
+    quality = None if mp3 else choice.split("_")[1]
 
     try:
-        # ================= TRY WITH COOKIES =================
-        ydl_opts = get_ydl_opts(quality, mp3)
-
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        with yt_dlp.YoutubeDL(get_opts(quality, mp3)) as ydl:
             info = ydl.extract_info(url, download=True)
             file_path = ydl.prepare_filename(info)
-
-    except Exception:
-        # ================= FALLBACK (NO COOKIES) =================
-        ydl_opts = {
-            "outtmpl": "downloads/%(title)s.%(ext)s",
-            "noplaylist": True,
-            "quiet": True,
-            "format": "best"
-        }
-
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+    except:
+        with yt_dlp.YoutubeDL({"outtmpl": "downloads/%(title)s.%(ext)s", "format": "best"}) as ydl:
             info = ydl.extract_info(url, download=True)
             file_path = ydl.prepare_filename(info)
 
@@ -145,13 +151,13 @@ async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
     os.remove(file_path)
 
 
-# ================= APP =================
 app = Application.builder().token(BOT_TOKEN).build()
 
 app.add_handler(CommandHandler("start", start))
 app.add_handler(CallbackQueryHandler(language, pattern="ar|en"))
 app.add_handler(CallbackQueryHandler(platform, pattern="yt|tt|fb|ig"))
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_router))
+app.add_handler(CallbackQueryHandler(select_video, pattern="^vid_"))
 app.add_handler(CallbackQueryHandler(download, pattern="q_|mp3"))
 
 print("Bot Running...")
