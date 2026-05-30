@@ -4,7 +4,6 @@ import logging
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
-from youtubesearchpython import VideosSearch
 
 TOKEN = os.getenv("BOT_TOKEN")
 
@@ -36,6 +35,13 @@ quality_kb = InlineKeyboardMarkup([
     ]
 ])
 
+# ---------------- SEARCH ---------------- #
+
+def search_youtube(query):
+    with yt_dlp.YoutubeDL({"quiet": True}) as ydl:
+        info = ydl.extract_info(f"ytsearch5:{query}", download=False)
+    return info["entries"]
+
 # ---------------- START ---------------- #
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -44,19 +50,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=lang_kb
     )
 
-# ---------------- SEARCH FUNCTION ---------------- #
-
-def search_youtube(query):
-    with yt_dlp.YoutubeDL({"quiet": True}) as ydl:
-        info = ydl.extract_info(f"ytsearch5:{query}", download=False)
-    return info["entries"]
-
-# ---------------- MESSAGE HANDLER ---------------- #
+# ---------------- MESSAGE ---------------- #
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
 
-    # 🔎 SEARCH MODE
+    # 🔎 SEARCH
     if "http" not in text:
         try:
             results = search_youtube(text)
@@ -81,9 +80,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # 🔗 LINK MODE
     context.user_data["url"] = text
-    await update.message.reply_text("🎥 اختار Video ولا MP3:", reply_markup=type_kb)
+    await update.message.reply_text("🎥 Video ولا MP3؟", reply_markup=type_kb)
 
-# ---------------- VIDEO SELECT ---------------- #
+# ---------------- SELECT VIDEO ---------------- #
 
 async def select_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
@@ -160,7 +159,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         return
 
-    # 🎬 VIDEO QUALITY
+    # 🎬 QUALITY
     if data.startswith("q_"):
         quality = data.split("_")[1]
 
@@ -179,6 +178,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await q.message.edit_text("🎥 اختار الجودة:", reply_markup=quality_kb)
         else:
             await q.message.edit_text("⏳ جاري التحميل MP3...")
+
             download(url, "mp3")
 
             with open("video.mp3", "rb") as f:
