@@ -11,7 +11,7 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-user_data = {}
+user_state = {}   # lang / mode / url
 
 # ================= AI =================
 async def ai_reply(text):
@@ -19,40 +19,86 @@ async def ai_reply(text):
         res = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": "انت مساعد داخل بوت تيليجرام وترد باختصار."},
+                {"role": "system", "content": "انت مساعد داخل بوت تيليجرام وترد بشكل مختصر وواضح."},
                 {"role": "user", "content": text}
             ]
         )
         return res.choices[0].message.content
+
     except Exception as e:
         print("AI ERROR:", e)
         return "مش قادر أرد دلوقتي ❌"
 
 
-# ================= START =================
+# ================= START (LANGUAGE) =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_data.clear()
-    await update.message.reply_text("👋 ابعت اسم فيديو أو اسألني 💬")
+    user_state.clear()
+
+    keyboard = [
+        [InlineKeyboardButton("🇪🇬 عربي", callback_data="lang_ar")],
+        [InlineKeyboardButton("🇺🇸 English", callback_data="lang_en")]
+    ]
+
+    await update.message.reply_text(
+        "🌍 اختار اللغة",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
 
 
-# ================= AI BUTTON =================
-async def ai_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ================= LANGUAGE SELECT =================
+async def language(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
 
-    user_data[q.from_user.id] = "ai_mode"
+    user_state[q.from_user.id] = {"lang": q.data, "mode": "menu"}
 
-    await q.message.reply_text("🤖 ابعت سؤالك وأنا هرد عليك")
+    keyboard = [
+        [InlineKeyboardButton("🔎 Search", callback_data="mode_search")],
+        [InlineKeyboardButton("🤖 AI Chat", callback_data="mode_ai")]
+    ]
+
+    await q.message.edit_text(
+        "👋 اختار الطريقة",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
 
 
-# ================= SEARCH =================
-async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ================= MODE SELECT =================
+async def mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+
+    uid = q.from_user.id
+
+    if q.data == "mode_search":
+        user_state[uid]["mode"] = "search"
+        await q.message.edit_text("🔎 ابعت اسم الفيديو")
+
+    elif q.data == "mode_ai":
+        user_state[uid]["mode"] = "ai"
+        await q.message.edit_text("🤖 ابعت سؤالك وأنا أرد عليك")
+
+
+# ================= MAIN HANDLER =================
+async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     uid = update.effective_user.id
 
+    if uid not in user_state:
+        await update.message.reply_text("اكتب /start الأول")
+        return
+
+    state = user_state[uid].get("mode")
+
+    # ================= AI =================
+    if state == "ai":
+        reply = await ai_reply(text)
+        await update.message.reply_text(reply)
+        return
+
     # ================= LINK =================
     if text.startswith("http"):
-        user_data[uid] = text
+        user_state[uid]["url"] = text
 
         await update.message.reply_text(
             "🎯 اختر الجودة",
@@ -64,13 +110,7 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # ================= AI MODE =================
-    if user_data.get(uid) == "ai_mode":
-        reply = await ai_reply(text)
-        await update.message.reply_text(reply)
-        return
-
-    # ================= YOUTUBE SEARCH =================
+    # ================= SEARCH =================
     try:
         r = requests.get("https://www.googleapis.com/youtube/v3/search", params={
             "part": "snippet",
@@ -82,7 +122,7 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         data = r.json()
 
-        message = f'📋┃**نتائج البحث** عن "**{text}**"\n\n'
+        message = f'📋┃نتائج البحث عن "{text}"\n\n'
         keyboard = []
 
         for item in data["items"]:
@@ -90,45 +130,17 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
             title = item["snippet"]["title"]
             channel = item["snippet"]["channelTitle"]
 
-            message += f"""🎬 [{title}](https://youtu.be/{vid})
+            message += f"""🎬 {title}
 👤 {channel}
 🔗 /dl_{vid}
 
 """
 
-        keyboard = [
-            [InlineKeyboardButton("🤖 Talk with AI", callback_data="ai_start")]
-        ]
-
-        await update.message.reply_text(
-            message,
-            parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
+        await update.message.reply_text(message)
 
     except Exception as e:
-        print("SEARCH ERROR:", e)
+        print(e)
         await update.message.reply_text("Search failed ❌")
-
-
-# ================= DOWNLOAD BUTTON =================
-async def dl_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
-
-    vid = q.data.replace("dl_", "")
-    url = f"https://www.youtube.com/watch?v={vid}"
-
-    user_data[q.from_user.id] = url
-
-    await q.message.reply_text(
-        "🎯 اختر الجودة",
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("1080p", callback_data="q_1080")],
-            [InlineKeyboardButton("720p", callback_data="q_720")],
-            [InlineKeyboardButton("🎵 MP3", callback_data="mp3")]
-        ])
-    )
 
 
 # ================= DOWNLOAD =================
@@ -137,7 +149,7 @@ async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await q.answer()
 
     uid = q.from_user.id
-    url = user_data.get(uid)
+    url = user_state.get(uid, {}).get("url")
 
     mp3 = q.data == "mp3"
     quality = None if mp3 else q.data.split("_")[1]
@@ -147,9 +159,6 @@ async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "quiet": True,
         "noplaylist": True,
     }
-
-    if os.path.exists("cookies.txt"):
-        opts["cookiefile"] = "cookies.txt"
 
     if mp3:
         opts["format"] = "bestaudio/best"
@@ -177,14 +186,14 @@ async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
     os.remove(path)
 
 
-# ================= HANDLERS =================
+# ================= APP =================
 app = Application.builder().token(BOT_TOKEN).build()
 
 app.add_handler(CommandHandler("start", start))
-app.add_handler(CallbackQueryHandler(ai_button, pattern="ai_start"))
-app.add_handler(CallbackQueryHandler(dl_button, pattern="dl_"))
+app.add_handler(CallbackQueryHandler(language, pattern="lang_"))
+app.add_handler(CallbackQueryHandler(mode, pattern="mode_"))
 app.add_handler(CallbackQueryHandler(download, pattern="q_|mp3"))
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search))
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
 
 print("Bot Running...")
 app.run_polling()
