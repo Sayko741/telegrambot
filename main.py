@@ -1,5 +1,5 @@
 from telegram import Update
-from telegram.ext import ApplicationBuilder, MessageHandler, ContextTypes, filters
+from telegram.ext import Application, MessageHandler, ContextTypes, filters
 import yt_dlp
 import os
 
@@ -25,18 +25,19 @@ async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
             file_path = ydl.prepare_filename(info)
 
         if os.path.exists(file_path):
-            await update.message.reply_video(video=open(file_path, 'rb'))
+            with open(file_path, 'rb') as f:
+                await update.message.reply_video(video=f)
             os.remove(file_path)
         else:
-            await update.message.reply_text("❌ الملف مش موجود بعد التحميل")
+            await update.message.reply_text("❌ الملف مش موجود")
 
     except Exception as e:
-        await update.message.reply_text(f"❌ حصل خطأ:\n{e}")
+        await update.message.reply_text(f"❌ خطأ:\n{e}")
 
     await msg.delete()
 
 
-app = ApplicationBuilder().token(BOT_TOKEN).build()
+app = Application.builder().token(BOT_TOKEN).build()
 
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, download))
 
