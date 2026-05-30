@@ -12,6 +12,7 @@ search_cache = {}
 
 os.makedirs("downloads", exist_ok=True)
 
+# ================= TEXT =================
 TEXT = {
     "ar": {
         "choose_lang": "اختار اللغة 🌍",
@@ -19,28 +20,52 @@ TEXT = {
         "quality": "اختار الجودة 🎯",
         "downloading": "⏳ جاري التحميل...",
         "search_fail": "فشل البحث ❌"
-    },
-    "en": {
-        "choose_lang": "Choose language 🌍",
-        "send": "Send link or type a search 🔎",
-        "quality": "Choose quality 🎯",
-        "downloading": "⏳ Downloading...",
-        "search_fail": "Search failed ❌"
     }
 }
 
 def t(uid, key):
-    lang = user_lang.get(uid, "en")
-    return TEXT[lang][key]
+    return TEXT.get(user_lang.get(uid, "ar"), TEXT["ar"])[key]
 
 
 # ================= START =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
-        [InlineKeyboardButton("🇪🇬 عربي", callback_data="lang_ar")],
-        [InlineKeyboardButton("🇺🇸 English", callback_data="lang_en")]
+        [InlineKeyboardButton("🔍 Start", callback_data="start")],
+        [InlineKeyboardButton("🌍 Language", callback_data="lang_menu")],
+        [InlineKeyboardButton("❓ Help", callback_data="help")],
+        [InlineKeyboardButton("🔄 Restart", callback_data="restart")]
     ]
-    await update.message.reply_text("🌍", reply_markup=InlineKeyboardMarkup(keyboard))
+
+    await update.message.reply_text(
+        "👋 Welcome",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+
+# ================= MENU =================
+async def menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+
+    if q.data == "help":
+        await q.edit_message_text(
+            "📌 استخدم البوت:\n- اكتب بحث 🔎\n- ابعت لينك 🎬\n- اختار الجودة 🎯",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅ Back", callback_data="back")]
+            ])
+        )
+
+    elif q.data in ["back", "restart", "start"]:
+        await q.edit_message_text("🔎 ابعت بحث أو رابط")
+
+    elif q.data == "lang_menu":
+        await q.edit_message_text(
+            "🌍 اختار اللغة",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🇪🇬 عربي", callback_data="lang_ar")],
+                [InlineKeyboardButton("🇺🇸 English", callback_data="lang_en")]
+            ])
+        )
 
 
 # ================= LANGUAGE =================
@@ -48,13 +73,11 @@ async def language(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
 
-    lang = q.data.split("_")[1]
-    user_lang[q.from_user.id] = lang
-
-    await q.edit_message_text(t(q.from_user.id, "send"))
+    user_lang[q.from_user.id] = q.data.split("_")[1]
+    await q.edit_message_text("✅ تم اختيار اللغة")
 
 
-# ================= YOUTUBE SEARCH (API) =================
+# ================= YOUTUBE SEARCH =================
 async def yt_search(update: Update, context: ContextTypes.DEFAULT_TYPE, text):
     uid = update.message.from_user.id
 
@@ -73,28 +96,32 @@ async def yt_search(update: Update, context: ContextTypes.DEFAULT_TYPE, text):
         data = r.json()
 
         results = []
+        message = f'📋┃نتائج البحث عن "{text}"\n\n'
 
         for item in data["items"]:
-            results.append({
-                "title": item["snippet"]["title"],
-                "webpage_url": f"https://www.youtube.com/watch?v={item['id']['videoId']}"
-            })
+            vid = item["id"]["videoId"]
+            title = item["snippet"]["title"]
+            channel = item["snippet"]["channelTitle"]
+
+            # views (optional fallback)
+            views = "N/A"
+
+            results.append(vid)
+
+            message += f"""🎬 {title}
+👤 {channel}
+🕑 -- - 👁 {views}
+🔗 /dl_{vid}
+
+"""
 
         search_cache[uid] = results
 
-        keyboard = [
-            [InlineKeyboardButton(v["title"][:45], callback_data=f"vid_{i}")]
-            for i, v in enumerate(results)
-        ]
-
-        await update.message.reply_text(
-            "🔎",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
+        await update.message.reply_text(message)
 
     except Exception as e:
-        print("YT SEARCH ERROR:", e)
-        await update.message.reply_text(t(uid, "search_fail"))
+        print("SEARCH ERROR:", e)
+        await update.message.reply_text("Search failed ❌")
 
 
 # ================= MESSAGE ROUTER =================
@@ -102,49 +129,40 @@ async def message_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.message.from_user.id
     text = update.message.text
 
-    if uid not in user_lang:
-        return
-
     if text.startswith("http"):
         user_lang[uid + 1000] = text
 
-        keyboard = [
-            [InlineKeyboardButton("1080p", callback_data="q_1080")],
-            [InlineKeyboardButton("720p", callback_data="q_720")],
-            [InlineKeyboardButton("480p", callback_data="q_480")],
-            [InlineKeyboardButton("360p", callback_data="q_360")],
-            [InlineKeyboardButton("🎵 MP3", callback_data="mp3")]
-        ]
-
         await update.message.reply_text(
-            t(uid, "quality"),
-            reply_markup=InlineKeyboardMarkup(keyboard)
+            "🎯 اختر الجودة",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("1080p", callback_data="q_1080")],
+                [InlineKeyboardButton("720p", callback_data="q_720")],
+                [InlineKeyboardButton("🎵 MP3", callback_data="mp3")]
+            ])
         )
         return
 
     await yt_search(update, context, text)
 
 
-# ================= SELECT VIDEO =================
-async def select_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
+# ================= /DL COMMAND =================
+async def dl_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
 
-    uid = q.from_user.id
-    idx = int(q.data.split("_")[1])
+    if text.startswith("/dl_"):
+        vid = text.replace("/dl_", "")
+        url = f"https://www.youtube.com/watch?v={vid}"
 
-    video = search_cache[uid][idx]
-    user_lang[uid + 1000] = video["webpage_url"]
+        user_lang[update.message.from_user.id + 1000] = url
 
-    keyboard = [
-        [InlineKeyboardButton("1080p", callback_data="q_1080")],
-        [InlineKeyboardButton("720p", callback_data="q_720")],
-        [InlineKeyboardButton("480p", callback_data="q_480")],
-        [InlineKeyboardButton("360p", callback_data="q_360")],
-        [InlineKeyboardButton("🎵 MP3", callback_data="mp3")]
-    ]
-
-    await q.edit_message_text(t(uid, "quality"), reply_markup=InlineKeyboardMarkup(keyboard))
+        await update.message.reply_text(
+            "🎯 اختر الجودة",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("1080p", callback_data="q_1080")],
+                [InlineKeyboardButton("720p", callback_data="q_720")],
+                [InlineKeyboardButton("🎵 MP3", callback_data="mp3")]
+            ])
+        )
 
 
 # ================= DOWNLOAD OPTIONS =================
@@ -181,7 +199,7 @@ async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
     url = user_lang.get(uid + 1000)
     choice = q.data
 
-    await q.edit_message_text(t(uid, "downloading"))
+    await q.edit_message_text("⏳ جاري التحميل...")
 
     mp3 = choice == "mp3"
     quality = None if mp3 else choice.split("_")[1]
@@ -193,15 +211,14 @@ async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     except Exception as e:
         print("DOWNLOAD ERROR:", e)
-        with yt_dlp.YoutubeDL({"format": "best", "outtmpl": "downloads/%(title)s.%(ext)s"}) as ydl:
-            info = ydl.extract_info(url, download=True)
-            path = ydl.prepare_filename(info)
-
-    if not os.path.exists(path):
-        path = path.rsplit(".", 1)[0] + ".mp4"
+        await q.message.reply_text("Download failed ❌")
+        return
 
     with open(path, "rb") as f:
-        await q.message.reply_document(f)
+        if mp3:
+            await q.message.reply_audio(f)
+        else:
+            await q.message.reply_document(f)
 
     os.remove(path)
 
@@ -211,8 +228,9 @@ app = Application.builder().token(BOT_TOKEN).build()
 
 app.add_handler(CommandHandler("start", start))
 app.add_handler(CallbackQueryHandler(language, pattern="lang_"))
+app.add_handler(CallbackQueryHandler(menu_handler))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_router))
-app.add_handler(CallbackQueryHandler(select_video, pattern="vid_"))
+app.add_handler(MessageHandler(filters.Regex(r"^/dl_"), dl_command))
 app.add_handler(CallbackQueryHandler(download, pattern="q_|mp3"))
 
 print("Bot Running...")
