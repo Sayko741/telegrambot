@@ -65,7 +65,6 @@ quality_kb = InlineKeyboardMarkup([
 # ---------------- START ---------------- #
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["lang"] = "ar"
     await update.message.reply_text(TEXT["ar"]["start"], reply_markup=lang_kb)
 
 # ---------------- MESSAGE ---------------- #
@@ -80,16 +79,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["url"] = text
     await update.message.reply_text(TEXT[lang]["choose"], reply_markup=type_kb)
 
-# ---------------- DOWNLOAD ---------------- #
+# ---------------- DOWNLOAD CORE ---------------- #
 
 def download(url, mode, quality=None):
     ydl_opts = {
         "outtmpl": "video.%(ext)s",
         "noplaylist": True,
         "quiet": True,
-        "ffmpeg_location": "/usr/bin/ffmpeg",
     }
 
+    # 🎵 MP3
     if mode == "mp3":
         ydl_opts.update({
             "format": "bestaudio/best",
@@ -99,8 +98,11 @@ def download(url, mode, quality=None):
                 "preferredquality": "192",
             }]
         })
+
+    # 🎬 VIDEO (FIXED FOR ALL PLATFORMS)
     else:
-        ydl_opts["format"] = f"bestvideo[height={quality}]+bestaudio/best[height={quality}]"
+        # 🔥 أهم سطر هنا (حل كل errors)
+        ydl_opts["format"] = f"best[height<={quality}]/best"
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         ydl.download([url])
@@ -140,6 +142,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # 🎬 QUALITY DOWNLOAD
         elif data.startswith("q_"):
             quality = data.split("_")[1]
+
             download(url, "video", quality)
 
             with open("video.mp4", "rb") as f:
