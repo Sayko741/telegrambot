@@ -3,13 +3,33 @@ from telegram.ext import Application, CommandHandler, CallbackQueryHandler, Mess
 import yt_dlp
 import os
 import requests
+from openai import OpenAI
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
+client = OpenAI(api_key=OPENAI_API_KEY)
 
 user_data = {}
 
-# ================= START (LANGUAGE SCREEN) =================
+# ================= AI =================
+async def ai_reply(text):
+    try:
+        res = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "انت مساعد ذكي داخل بوت تيليجرام وترد باختصار."},
+                {"role": "user", "content": text}
+            ]
+        )
+        return res.choices[0].message.content
+
+    except:
+        return "مش قادر أرد دلوقتي ❌"
+
+
+# ================= START =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_data.clear()
 
@@ -31,51 +51,10 @@ async def language(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user_data["lang"] = q.data
 
-    keyboard = [
-        [InlineKeyboardButton("🔍 Start", callback_data="menu_start")],
-        [InlineKeyboardButton("❓ Help", callback_data="help")],
-        [InlineKeyboardButton("🔄 Restart", callback_data="restart")]
-    ]
-
-    await q.message.edit_text(
-        "👋 ابعت اسم فيديو أو رابط 🔎",
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
+    await q.message.edit_text("👋 ابعت اسم فيديو أو سؤال 💬")
 
 
-# ================= MENU =================
-async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
-
-    if q.data == "menu_start":
-        await q.message.edit_text("🔎 ابعت اسم الفيديو أو الرابط")
-
-    elif q.data == "help":
-        await q.message.edit_text(
-            "📌 طريقة الاستخدام:\n"
-            "- ابعت اسم فيديو 🔎\n"
-            "- أو رابط 🎬\n"
-            "- اختار الجودة 🎯",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("⬅ Back", callback_data="back")]
-            ])
-        )
-
-    elif q.data == "back":
-        keyboard = [
-            [InlineKeyboardButton("🔍 Start", callback_data="menu_start")],
-            [InlineKeyboardButton("❓ Help", callback_data="help")],
-            [InlineKeyboardButton("🔄 Restart", callback_data="restart")]
-        ]
-
-        await q.message.edit_text("🏠 Menu", reply_markup=InlineKeyboardMarkup(keyboard))
-
-    elif q.data == "restart":
-        await start(q, context)
-
-
-# ================= YOUTUBE SEARCH =================
+# ================= SEARCH + AI =================
 async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     uid = update.effective_user.id
@@ -84,52 +63,59 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if text.startswith("http"):
         user_data[uid] = text
 
-        keyboard = [
-            [InlineKeyboardButton("1080p", callback_data="q_1080")],
-            [InlineKeyboardButton("720p", callback_data="q_720")],
-            [InlineKeyboardButton("🎵 MP3", callback_data="mp3")]
-        ]
-
         await update.message.reply_text(
             "🎯 اختر الجودة",
-            reply_markup=InlineKeyboardMarkup(keyboard)
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("1080p", callback_data="q_1080")],
+                [InlineKeyboardButton("720p", callback_data="q_720")],
+                [InlineKeyboardButton("🎵 MP3", callback_data="mp3")]
+            ])
         )
         return
 
-    # بحث API
-    url = "https://www.googleapis.com/youtube/v3/search"
+    # يوتيوب بحث
+    try:
+        r = requests.get("https://www.googleapis.com/youtube/v3/search", params={
+            "part": "snippet",
+            "q": text,
+            "type": "video",
+            "maxResults": 5,
+            "key": YOUTUBE_API_KEY
+        })
 
-    r = requests.get(url, params={
-        "part": "snippet",
-        "q": text,
-        "type": "video",
-        "maxResults": 5,
-        "key": YOUTUBE_API_KEY
-    })
+        data = r.json()
 
-    data = r.json()
+        # لو في نتائج → YouTube
+        if "items" in data and len(data["items"]) > 0:
+            message = f'📋┃نتائج البحث عن "{text}"\n\n'
+            keyboard = []
 
-    message = f'📋┃نتائج البحث عن "{text}"\n\n'
-    keyboard = []
+            for item in data["items"]:
+                vid = item["id"]["videoId"]
+                title = item["snippet"]["title"]
+                channel = item["snippet"]["channelTitle"]
 
-    for item in data["items"]:
-        vid = item["id"]["videoId"]
-        title = item["snippet"]["title"]
-        channel = item["snippet"]["channelTitle"]
-
-        message += f"""🎬 {title}
+                message += f"""🎬 {title}
 👤 {channel}
 
 """
 
-        keyboard.append([
-            InlineKeyboardButton("⬇ Download", callback_data=f"dl_{vid}")
-        ])
+                keyboard.append([
+                    InlineKeyboardButton("⬇ Download", callback_data=f"dl_{vid}")
+                ])
 
-    await update.message.reply_text(
-        message,
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
+            await update.message.reply_text(
+                message,
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+            return
+
+    except:
+        pass
+
+    # لو مش بحث → AI
+    reply = await ai_reply(text)
+    await update.message.reply_text(reply)
 
 
 # ================= DOWNLOAD BUTTON =================
@@ -142,15 +128,13 @@ async def dl_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user_data[q.from_user.id] = url
 
-    keyboard = [
-        [InlineKeyboardButton("1080p", callback_data="q_1080")],
-        [InlineKeyboardButton("720p", callback_data="q_720")],
-        [InlineKeyboardButton("🎵 MP3", callback_data="mp3")]
-    ]
-
     await q.message.reply_text(
         "🎯 اختر الجودة",
-        reply_markup=InlineKeyboardMarkup(keyboard)
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("1080p", callback_data="q_1080")],
+            [InlineKeyboardButton("720p", callback_data="q_720")],
+            [InlineKeyboardButton("🎵 MP3", callback_data="mp3")]
+        ])
     )
 
 
@@ -163,7 +147,7 @@ async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
     url = user_data.get(uid)
 
     mp3 = q.data == "mp3"
-    quality = None if mp3 else q.data.split("_")[-1]
+    quality = None if mp3 else q.data.split("_")[1]
 
     opts = {
         "outtmpl": "downloads/%(title)s.%(ext)s",
@@ -204,16 +188,9 @@ async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
 app = Application.builder().token(BOT_TOKEN).build()
 
 app.add_handler(CommandHandler("start", start))
-
 app.add_handler(CallbackQueryHandler(language, pattern="lang_"))
-app.add_handler(CallbackQueryHandler(menu, pattern="menu_"))
-app.add_handler(CallbackQueryHandler(menu, pattern="help"))
-app.add_handler(CallbackQueryHandler(menu, pattern="back"))
-app.add_handler(CallbackQueryHandler(menu, pattern="restart"))
-
 app.add_handler(CallbackQueryHandler(dl_button, pattern="dl_"))
 app.add_handler(CallbackQueryHandler(download, pattern="q_|mp3"))
-
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search))
 
 print("Bot Running...")
