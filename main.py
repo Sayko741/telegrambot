@@ -25,9 +25,7 @@ async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
             file_path = ydl.prepare_filename(info)
 
         if os.path.exists(file_path):
-            with open(file_path, "rb") as video_file:
-                await update.message.reply_video(video=video_file)
-
+            await update.message.reply_video(video=open(file_path, 'rb'))
             os.remove(file_path)
         else:
             await update.message.reply_text("❌ الملف مش موجود بعد التحميل")
@@ -37,10 +35,11 @@ async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await msg.delete()
 
+
 app = ApplicationBuilder().token(BOT_TOKEN).build()
-if __name__ == "__main__":
-    app.run_polling()
+
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, download))
 
 print("Bot Running...")
+
 app.run_polling()
