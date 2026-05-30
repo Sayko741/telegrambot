@@ -26,20 +26,19 @@ async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if os.path.exists(file_path):
             with open(file_path, 'rb') as f:
-                await update.message.reply_video(video=f
+                await update.message.reply_video(video=f)
             os.remove(file_path)
         else:
-            await update.message.reply_text("❌ الملف مش موجود")
-                
+            await update.message.reply_text("❌ الملف مش موجود بعد التحميل")
 
-    eawait update.message.reply_text(f"❌ خطأ:\n{e}")
+    except Exception as e:
+        await update.message.reply_text(f"❌ خطأ:\n{e}")
 
     await msg.delete()
 
 
 app = Application.builder().token(BOT_TOKEN).build()
-
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, download))
+app.add_handler(MessageHandler(filters.ALL, download))
 
 print("Bot Running...")
 
