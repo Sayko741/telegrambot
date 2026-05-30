@@ -9,16 +9,40 @@ YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 
 user_state = {}
 
+# ================= TEXT =================
+TEXT = {
+    "ar": {
+        "choose_lang": "اختار اللغة 🌍",
+        "send": "ابعت اسم الفيديو 🔎",
+        "quality": "اختار الجودة 🎯",
+        "downloading": "⏳ جاري التحميل...",
+        "home": "🏠 الرئيسية"
+    },
+    "en": {
+        "choose_lang": "Choose language 🌍",
+        "send": "Send video name 🔎",
+        "quality": "Choose quality 🎯",
+        "downloading": "⏳ Downloading...",
+        "home": "🏠 Home"
+    }
+}
+
+def t(uid, key):
+    lang = user_state.get(uid, {}).get("lang", "ar")
+    return TEXT[lang][key]
+
+
 # ================= START =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_state.clear()
 
     keyboard = [
-        [InlineKeyboardButton("🇪🇬 عربي", callback_data="lang")]
+        [InlineKeyboardButton("🇪🇬 عربي", callback_data="lang_ar")],
+        [InlineKeyboardButton("🇺🇸 English", callback_data="lang_en")]
     ]
 
     await update.message.reply_text(
-        "🌍 اختر اللغة",
+        TEXT["ar"]["choose_lang"],
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
@@ -30,29 +54,34 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = q.from_user.id
 
     # LANGUAGE
-    if q.data == "lang":
-        user_state[uid] = {"mode": "search"}
-        await q.message.edit_text("🔎 ابعت اسم الفيديو")
+    if q.data.startswith("lang_"):
+        lang = q.data.split("_")[1]
+        user_state[uid] = {"lang": lang, "mode": "search"}
 
-    # SELECT VIDEO
+        await q.message.edit_text(t(uid, "send"))
+
+    # HOME
+    elif q.data == "home":
+        user_state[uid]["mode"] = "search"
+        await q.message.edit_text(t(uid, "send"))
+
+    # VIDEO SELECT
     elif q.data.startswith("vid_"):
         vid = q.data.split("_")[1]
         user_state[uid]["url"] = f"https://www.youtube.com/watch?v={vid}"
 
         keyboard = [
-            [InlineKeyboardButton("🎬 MP4", callback_data="dl_mp4")],
-            [InlineKeyboardButton("🎵 MP3", callback_data="dl_mp3")],
+            [InlineKeyboardButton("1080p", callback_data="q_1080")],
+            [InlineKeyboardButton("720p", callback_data="q_720")],
+            [InlineKeyboardButton("480p", callback_data="q_480")],
+            [InlineKeyboardButton("360p", callback_data="q_360")],
+            [InlineKeyboardButton("240p", callback_data="q_240")],
+            [InlineKeyboardButton("144p", callback_data="q_144")],
+            [InlineKeyboardButton("🎵 MP3", callback_data="mp3")],
             [InlineKeyboardButton("🏠 Home", callback_data="home")]
         ]
 
-        await q.message.edit_text(
-            "🎯 اختر التحميل",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-
-    # HOME
-    elif q.data == "home":
-        await q.message.edit_text("🏠 Home")
+        await q.message.edit_text(t(uid, "quality"), reply_markup=InlineKeyboardMarkup(keyboard))
 
 
 # ================= SEARCH =================
@@ -94,17 +123,12 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
             keyboard.append([
-                InlineKeyboardButton(f"⬇ {title[:22]}", callback_data=f"vid_{vid}")
+                InlineKeyboardButton(f"🎬 {title[:22]}", callback_data=f"vid_{vid}")
             ])
 
-        keyboard.append([
-            InlineKeyboardButton("🏠 Home", callback_data="home")
-        ])
+        keyboard.append([InlineKeyboardButton("🏠 Home", callback_data="home")])
 
-        await update.message.reply_text(
-            msg,
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
+        await update.message.reply_text(msg, reply_markup=InlineKeyboardMarkup(keyboard))
 
     except Exception as e:
         print("SEARCH ERROR:", e)
@@ -123,9 +147,10 @@ async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await q.message.reply_text("❌ مفيش فيديو مختار")
         return
 
-    await q.message.edit_text("⏳ جاري التحميل...")
+    await q.message.edit_text(t(uid, "downloading"))
 
-    mp3 = q.data == "dl_mp3"
+    mp3 = q.data == "mp3"
+    quality = None if mp3 else q.data.split("_")[1]
 
     opts = {
         "outtmpl": "downloads/%(title)s.%(ext)s",
@@ -133,7 +158,6 @@ async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "noplaylist": True,
     }
 
-    # ================= MP3 (FFMPEG REQUIRED) =================
     if mp3:
         opts["format"] = "bestaudio/best"
         opts["postprocessors"] = [{
@@ -142,15 +166,13 @@ async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "preferredquality": "192",
         }]
     else:
-        opts["format"] = "best"
+        opts["format"] = f"bestvideo[height<={quality}]+bestaudio/best"
+        opts["merge_output_format"] = "mp4"
 
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=True)
             path = ydl.prepare_filename(info)
-
-        if not os.path.exists(path):
-            raise Exception("file not found")
 
         with open(path, "rb") as f:
             if mp3:
@@ -161,18 +183,18 @@ async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
         os.remove(path)
 
     except Exception as e:
-        print("DOWNLOAD ERROR:", e)
+        print("ERROR:", e)
         await q.message.reply_text("❌ فشل التحميل")
 
 
-# ================= APP =================
+# ================= RUN =================
 os.makedirs("downloads", exist_ok=True)
 
 app = Application.builder().token(BOT_TOKEN).build()
 
 app.add_handler(CommandHandler("start", start))
-app.add_handler(CallbackQueryHandler(buttons))
-app.add_handler(CallbackQueryHandler(download, pattern="dl_"))
+app.add_handler(CallbackQueryHandler(buttons, pattern="lang_|vid_|home"))
+app.add_handler(CallbackQueryHandler(download, pattern="q_|mp3"))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
 
 print("Bot Running...")
