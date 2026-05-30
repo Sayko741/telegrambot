@@ -1,5 +1,5 @@
 python-telegram-bot==20.7
 yt-dlp
 requests
-openai
+google-generativeai
 ffmpeg-python
