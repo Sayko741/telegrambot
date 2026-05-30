@@ -46,7 +46,7 @@ async def platform(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
-    user_data[query.from_user.id] = {"platform": query.data}
+    user_data[query.from_user.id] = {}
 
     await query.edit_message_text("ابعت اللينك 🔗")
 
@@ -75,6 +75,27 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+# ================= GET OPTIONS =================
+def get_ydl_opts(quality=None, mp3=False):
+    opts = {
+        "outtmpl": "downloads/%(title)s.%(ext)s",
+        "noplaylist": True,
+        "quiet": True,
+    }
+
+    # 🔥 cookies fix
+    if os.path.exists("cookies.txt"):
+        opts["cookiefile"] = "cookies.txt"
+
+    if mp3:
+        opts["format"] = "bestaudio/best"
+    else:
+        opts["format"] = f"bestvideo[height<={quality}]+bestaudio/best"
+        opts["merge_output_format"] = "mp4"
+
+    return opts
+
+
 # ================= DOWNLOAD =================
 async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -86,34 +107,42 @@ async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await query.edit_message_text("⏳ جاري التحميل...")
 
+    mp3 = False
+    quality = None
+
+    if choice == "mp3":
+        mp3 = True
+    else:
+        quality = choice.split("_")[1]
+
     try:
-        if choice == "mp3":
-            ydl_opts = {
-                "format": "bestaudio",
-                "outtmpl": "downloads/%(title)s.%(ext)s"
-            }
-        else:
-            quality = choice.split("_")[1]
-            ydl_opts = {
-                "format": f"bestvideo[height<={quality}]+bestaudio/best",
-                "outtmpl": "downloads/%(title)s.%(ext)s",
-                "merge_output_format": "mp4"
-            }
+        # ================= TRY WITH COOKIES =================
+        ydl_opts = get_ydl_opts(quality, mp3)
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
             file_path = ydl.prepare_filename(info)
 
-        if not os.path.exists(file_path):
-            file_path = file_path.rsplit(".", 1)[0] + ".mp4"
+    except Exception:
+        # ================= FALLBACK (NO COOKIES) =================
+        ydl_opts = {
+            "outtmpl": "downloads/%(title)s.%(ext)s",
+            "noplaylist": True,
+            "quiet": True,
+            "format": "best"
+        }
 
-        with open(file_path, "rb") as f:
-            await query.message.reply_document(f)
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            file_path = ydl.prepare_filename(info)
 
-        os.remove(file_path)
+    if not os.path.exists(file_path):
+        file_path = file_path.rsplit(".", 1)[0] + ".mp4"
 
-    except Exception as e:
-        await query.message.reply_text(f"❌ خطأ:\n{e}")
+    with open(file_path, "rb") as f:
+        await query.message.reply_document(f)
+
+    os.remove(file_path)
 
 
 # ================= APP =================
