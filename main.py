@@ -19,47 +19,38 @@ async def ai_reply(text):
         res = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": "انت مساعد ذكي داخل بوت تيليجرام وترد باختصار."},
+                {"role": "system", "content": "انت مساعد داخل بوت تيليجرام وترد باختصار."},
                 {"role": "user", "content": text}
             ]
         )
         return res.choices[0].message.content
-
-    except:
+    except Exception as e:
+        print("AI ERROR:", e)
         return "مش قادر أرد دلوقتي ❌"
 
 
 # ================= START =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_data.clear()
-
-    keyboard = [
-        [InlineKeyboardButton("🇪🇬 عربي", callback_data="lang_ar")],
-        [InlineKeyboardButton("🇺🇸 English", callback_data="lang_en")]
-    ]
-
-    await update.message.reply_text(
-        "🌍 اختار اللغة",
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
+    await update.message.reply_text("👋 ابعت اسم فيديو أو اسألني 💬")
 
 
-# ================= LANGUAGE =================
-async def language(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ================= AI BUTTON =================
+async def ai_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
 
-    user_data["lang"] = q.data
+    user_data[q.from_user.id] = "ai_mode"
 
-    await q.message.edit_text("👋 ابعت اسم فيديو أو سؤال 💬")
+    await q.message.reply_text("🤖 ابعت سؤالك وأنا هرد عليك")
 
 
-# ================= SEARCH + AI =================
+# ================= SEARCH =================
 async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     uid = update.effective_user.id
 
-    # لو رابط
+    # ================= LINK =================
     if text.startswith("http"):
         user_data[uid] = text
 
@@ -73,7 +64,13 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # يوتيوب بحث
+    # ================= AI MODE =================
+    if user_data.get(uid) == "ai_mode":
+        reply = await ai_reply(text)
+        await update.message.reply_text(reply)
+        return
+
+    # ================= YOUTUBE SEARCH =================
     try:
         r = requests.get("https://www.googleapis.com/youtube/v3/search", params={
             "part": "snippet",
@@ -85,37 +82,33 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         data = r.json()
 
-        # لو في نتائج → YouTube
-        if "items" in data and len(data["items"]) > 0:
-            message = f'📋┃نتائج البحث عن "{text}"\n\n'
-            keyboard = []
+        message = f'📋┃**نتائج البحث** عن "**{text}**"\n\n'
+        keyboard = []
 
-            for item in data["items"]:
-                vid = item["id"]["videoId"]
-                title = item["snippet"]["title"]
-                channel = item["snippet"]["channelTitle"]
+        for item in data["items"]:
+            vid = item["id"]["videoId"]
+            title = item["snippet"]["title"]
+            channel = item["snippet"]["channelTitle"]
 
-                message += f"""🎬 {title}
+            message += f"""🎬 [{title}](https://youtu.be/{vid})
 👤 {channel}
+🔗 /dl_{vid}
 
 """
 
-                keyboard.append([
-                    InlineKeyboardButton("⬇ Download", callback_data=f"dl_{vid}")
-                ])
+        keyboard = [
+            [InlineKeyboardButton("🤖 Talk with AI", callback_data="ai_start")]
+        ]
 
-            await update.message.reply_text(
-                message,
-                reply_markup=InlineKeyboardMarkup(keyboard)
-            )
-            return
+        await update.message.reply_text(
+            message,
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
 
-    except:
-        pass
-
-    # لو مش بحث → AI
-    reply = await ai_reply(text)
-    await update.message.reply_text(reply)
+    except Exception as e:
+        print("SEARCH ERROR:", e)
+        await update.message.reply_text("Search failed ❌")
 
 
 # ================= DOWNLOAD BUTTON =================
@@ -184,11 +177,11 @@ async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
     os.remove(path)
 
 
-# ================= APP =================
+# ================= HANDLERS =================
 app = Application.builder().token(BOT_TOKEN).build()
 
 app.add_handler(CommandHandler("start", start))
-app.add_handler(CallbackQueryHandler(language, pattern="lang_"))
+app.add_handler(CallbackQueryHandler(ai_button, pattern="ai_start"))
 app.add_handler(CallbackQueryHandler(dl_button, pattern="dl_"))
 app.add_handler(CallbackQueryHandler(download, pattern="q_|mp3"))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search))
