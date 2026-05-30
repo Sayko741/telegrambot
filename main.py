@@ -35,12 +35,45 @@ quality_kb = InlineKeyboardMarkup([
     ]
 ])
 
-# ---------------- SEARCH ---------------- #
+# ---------------- SEARCH (STABLE) ---------------- #
 
 def search_youtube(query):
-    with yt_dlp.YoutubeDL({"quiet": True}) as ydl:
+    ydl_opts = {
+        "quiet": True,
+        "no_warnings": True,
+        "extract_flat": True,
+        "skip_download": True,
+    }
+
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(f"ytsearch5:{query}", download=False)
-    return info["entries"]
+
+    return info.get("entries", [])
+
+# ---------------- DOWNLOAD ---------------- #
+
+def download(url, mode, quality=None):
+    ydl_opts = {
+        "outtmpl": "video.%(ext)s",
+        "quiet": True,
+        "nocheckcertificate": True,
+        "geo_bypass": True,
+        "format": "bestvideo+bestaudio/best",
+    }
+
+    if mode == "mp3":
+        ydl_opts.update({
+            "format": "bestaudio/best",
+            "postprocessors": [{
+                "key": "FFmpegExtractAudio",
+                "preferredcodec": "mp3",
+            }]
+        })
+    else:
+        ydl_opts["format"] = f"best[height<={quality}]/best"
+
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        ydl.download([url])
 
 # ---------------- START ---------------- #
 
@@ -55,7 +88,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
 
-    # 🔎 SEARCH
+    # 🔎 SEARCH MODE
     if "http" not in text:
         try:
             results = search_youtube(text)
@@ -66,9 +99,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for i, r in enumerate(results):
                 msg += (
                     f"🎬 {r.get('title')}\n"
-                    f"👤 {r.get('uploader')}\n"
-                    f"🕒 {r.get('duration')}\n"
-                    f"🎯 اضغط /v{i}\n\n"
+                    f"🔗 /v{i}\n\n"
                 )
 
             await update.message.reply_text(msg)
@@ -98,7 +129,7 @@ async def select_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return await update.message.reply_text("❌ اعمل بحث الأول")
 
         video = results[index]
-        context.user_data["url"] = video["webpage_url"]
+        context.user_data["url"] = video["url"]
 
         await update.message.reply_text(
             f"🎬 {video['title']}\n\nاختار الجودة:",
@@ -107,30 +138,6 @@ async def select_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     except:
         await update.message.reply_text("❌ Error")
-
-# ---------------- DOWNLOAD ---------------- #
-
-def download(url, mode, quality=None):
-    ydl_opts = {
-        "outtmpl": "video.%(ext)s",
-        "quiet": True,
-        "nocheckcertificate": True,
-        "geo_bypass": True
-    }
-
-    if mode == "mp3":
-        ydl_opts.update({
-            "format": "bestaudio/best",
-            "postprocessors": [{
-                "key": "FFmpegExtractAudio",
-                "preferredcodec": "mp3",
-            }]
-        })
-    else:
-        ydl_opts["format"] = f"best[height<={quality}]/best"
-
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        ydl.download([url])
 
 # ---------------- CALLBACK ---------------- #
 
@@ -141,7 +148,6 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = q.data
     url = context.user_data.get("url")
 
-    # 🌍 LANGUAGE
     if data.startswith("lang"):
         return await q.message.edit_text("🔎 ابعت اسم فيديو أو رابط")
 
