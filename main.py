@@ -1,5 +1,6 @@
 import os
 import yt_dlp
+import uuid
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -19,16 +20,14 @@ TEXT = {
     "ar": {
         "start": "🌍 اختار اللغة",
         "send": "📌 ابعت لينك الفيديو",
-        "choose": "🎥 اختار Video أو MP3",
-        "quality": "🎬 اختار الجودة",
+        "choose": "🎥 Video أو MP3",
         "downloading": "⏳ جاري التحميل...",
         "invalid": "❌ ابعت لينك صحيح"
     },
     "en": {
         "start": "🌍 Choose language",
         "send": "📌 Send video link",
-        "choose": "🎥 Choose Video or MP3",
-        "quality": "🎬 Choose quality",
+        "choose": "🎥 Video or MP3",
         "downloading": "⏳ Downloading...",
         "invalid": "❌ Send valid link"
     }
@@ -48,24 +47,10 @@ type_kb = InlineKeyboardMarkup([
     [InlineKeyboardButton("🎵 MP3", callback_data="mp3")]
 ])
 
-quality_kb = InlineKeyboardMarkup([
-    [
-        InlineKeyboardButton("160", callback_data="q_160"),
-        InlineKeyboardButton("360", callback_data="q_360")
-    ],
-    [
-        InlineKeyboardButton("480", callback_data="q_480"),
-        InlineKeyboardButton("720", callback_data="q_720")
-    ],
-    [
-        InlineKeyboardButton("1080", callback_data="q_1080")
-    ]
-])
-
 # ---------------- START ---------------- #
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(TEXT["ar"]["start"], reply_markup=lang_kb)
+    await update.message.reply_text("🌍 Choose language / اختار اللغة", reply_markup=lang_kb)
 
 # ---------------- MESSAGE ---------------- #
 
@@ -79,16 +64,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["url"] = text
     await update.message.reply_text(TEXT[lang]["choose"], reply_markup=type_kb)
 
-# ---------------- DOWNLOAD CORE ---------------- #
+# ---------------- DOWNLOAD ---------------- #
 
-def download(url, mode, quality=None):
+def download(url, mode):
+    file_id = str(uuid.uuid4())
+
     ydl_opts = {
-        "outtmpl": "video.%(ext)s",
+        "outtmpl": f"{file_id}.%(ext)s",
         "noplaylist": True,
         "quiet": True,
     }
 
-    # 🎵 MP3
     if mode == "mp3":
         ydl_opts.update({
             "format": "bestaudio/best",
@@ -98,14 +84,13 @@ def download(url, mode, quality=None):
                 "preferredquality": "192",
             }]
         })
-
-    # 🎬 VIDEO (FIXED FOR ALL PLATFORMS)
     else:
-        # 🔥 أهم سطر هنا (حل كل errors)
-        ydl_opts["format"] = f"best[height<={quality}]/best"
+        ydl_opts["format"] = "best"
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         ydl.download([url])
+
+    return file_id
 
 # ---------------- CALLBACK ---------------- #
 
@@ -115,7 +100,6 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     data = q.data
     url = context.user_data.get("url")
-    lang = context.user_data.get("lang", "ar")
 
     # 🌍 LANGUAGE
     if data.startswith("lang_"):
@@ -123,29 +107,26 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["lang"] = lang
         return await q.message.edit_text(TEXT[lang]["send"])
 
+    lang = context.user_data.get("lang", "ar")
+
     if not url:
         return await q.message.reply_text(TEXT[lang]["invalid"])
 
     await q.message.edit_text(TEXT[lang]["downloading"])
 
     try:
+        file_id = download(url, data)
+
         # 🎵 MP3
         if data == "mp3":
-            download(url, "mp3")
-            with open("video.mp3", "rb") as f:
+            path = f"{file_id}.mp3"
+            with open(path, "rb") as f:
                 await q.message.reply_document(f)
 
-        # 🎬 VIDEO → show quality
-        elif data == "video":
-            await q.message.edit_text(TEXT[lang]["quality"], reply_markup=quality_kb)
-
-        # 🎬 QUALITY DOWNLOAD
-        elif data.startswith("q_"):
-            quality = data.split("_")[1]
-
-            download(url, "video", quality)
-
-            with open("video.mp4", "rb") as f:
+        # 🎬 VIDEO
+        else:
+            path = f"{file_id}.mp4"
+            with open(path, "rb") as f:
                 await q.message.reply_document(f)
 
     except Exception as e:
