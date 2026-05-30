@@ -38,7 +38,8 @@ async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await msg.delete()
 
 app = ApplicationBuilder().token(BOT_TOKEN).build()
-
+if __name__ == "__main__":
+    app.run_polling()
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, download))
 
 print("Bot Running...")
