@@ -2,14 +2,15 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, ContextTypes, filters
 import yt_dlp
 import os
+import requests
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 
 user_lang = {}
 search_cache = {}
 
 os.makedirs("downloads", exist_ok=True)
-
 
 TEXT = {
     "ar": {
@@ -28,12 +29,12 @@ TEXT = {
     }
 }
 
-
 def t(uid, key):
     lang = user_lang.get(uid, "en")
     return TEXT[lang][key]
 
 
+# ================= START =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [InlineKeyboardButton("🇪🇬 عربي", callback_data="lang_ar")],
@@ -42,6 +43,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🌍", reply_markup=InlineKeyboardMarkup(keyboard))
 
 
+# ================= LANGUAGE =================
 async def language(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
@@ -52,18 +54,37 @@ async def language(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await q.edit_message_text(t(q.from_user.id, "send"))
 
 
+# ================= YOUTUBE SEARCH (API) =================
 async def yt_search(update: Update, context: ContextTypes.DEFAULT_TYPE, text):
     uid = update.message.from_user.id
 
     try:
-        with yt_dlp.YoutubeDL({"quiet": True}) as ydl:
-            data = ydl.extract_info(f"ytsearch5:{text}", download=False)
+        url = "https://www.googleapis.com/youtube/v3/search"
 
-        search_cache[uid] = data["entries"]
+        params = {
+            "part": "snippet",
+            "q": text,
+            "type": "video",
+            "maxResults": 5,
+            "key": YOUTUBE_API_KEY
+        }
+
+        r = requests.get(url, params=params)
+        data = r.json()
+
+        results = []
+
+        for item in data["items"]:
+            results.append({
+                "title": item["snippet"]["title"],
+                "webpage_url": f"https://www.youtube.com/watch?v={item['id']['videoId']}"
+            })
+
+        search_cache[uid] = results
 
         keyboard = [
             [InlineKeyboardButton(v["title"][:45], callback_data=f"vid_{i}")]
-            for i, v in enumerate(data["entries"])
+            for i, v in enumerate(results)
         ]
 
         await update.message.reply_text(
@@ -71,10 +92,12 @@ async def yt_search(update: Update, context: ContextTypes.DEFAULT_TYPE, text):
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
 
-    except:
+    except Exception as e:
+        print("YT SEARCH ERROR:", e)
         await update.message.reply_text(t(uid, "search_fail"))
 
 
+# ================= MESSAGE ROUTER =================
 async def message_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.message.from_user.id
     text = update.message.text
@@ -102,6 +125,7 @@ async def message_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await yt_search(update, context, text)
 
 
+# ================= SELECT VIDEO =================
 async def select_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
@@ -123,6 +147,7 @@ async def select_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await q.edit_message_text(t(uid, "quality"), reply_markup=InlineKeyboardMarkup(keyboard))
 
 
+# ================= DOWNLOAD OPTIONS =================
 def get_opts(q, mp3=False):
     opts = {
         "outtmpl": "downloads/%(title)s.%(ext)s",
@@ -135,6 +160,11 @@ def get_opts(q, mp3=False):
 
     if mp3:
         opts["format"] = "bestaudio/best"
+        opts["postprocessors"] = [{
+            "key": "FFmpegExtractAudio",
+            "preferredcodec": "mp3",
+            "preferredquality": "192",
+        }]
     else:
         opts["format"] = f"bestvideo[height<={q}]+bestaudio/best"
         opts["merge_output_format"] = "mp4"
@@ -142,6 +172,7 @@ def get_opts(q, mp3=False):
     return opts
 
 
+# ================= DOWNLOAD =================
 async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
@@ -159,7 +190,9 @@ async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
         with yt_dlp.YoutubeDL(get_opts(quality, mp3)) as ydl:
             info = ydl.extract_info(url, download=True)
             path = ydl.prepare_filename(info)
-    except:
+
+    except Exception as e:
+        print("DOWNLOAD ERROR:", e)
         with yt_dlp.YoutubeDL({"format": "best", "outtmpl": "downloads/%(title)s.%(ext)s"}) as ydl:
             info = ydl.extract_info(url, download=True)
             path = ydl.prepare_filename(info)
@@ -173,6 +206,7 @@ async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
     os.remove(path)
 
 
+# ================= APP =================
 app = Application.builder().token(BOT_TOKEN).build()
 
 app.add_handler(CommandHandler("start", start))
