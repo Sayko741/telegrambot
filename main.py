@@ -1,288 +1,167 @@
+import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, ContextTypes, filters
-import yt_dlp
-import os
-import asyncio
-import subprocess
-from collections import deque
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    CallbackQueryHandler,
+    MessageHandler,
+    ContextTypes,
+    filters,
+)
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+from config import BOT_TOKEN, ADMIN_ID
+from youtube import search_youtube
+from database import add_user, inc_search, stats
 
-user_state = {}
-search_results = {}
+logging.basicConfig(level=logging.INFO)
 
-DOWNLOAD_FOLDER = "downloads"
-os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
-
-queue = deque()
-processing = False
-
+PLATFORMS = ["YouTube", "TikTok", "Instagram", "Facebook", "Twitter", "Other"]
 
 # ================= START =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [[InlineKeyboardButton("🇪🇬 عربي", callback_data="lang")]]
-    await update.message.reply_text("اختار اللغة 🌍", reply_markup=InlineKeyboardMarkup(keyboard))
-
-
-# ================= LANG =================
-async def language(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-
-    user_state[query.from_user.id] = {}
+    user_id = update.effective_user.id
+    add_user(user_id)
 
     keyboard = [
-        [InlineKeyboardButton("YouTube 🎥", callback_data="yt")],
-        [InlineKeyboardButton("TikTok 🎵", callback_data="tt")],
-        [InlineKeyboardButton("Instagram 📸", callback_data="ig")]
+        [InlineKeyboardButton("🇪🇬 عربي", callback_data="lang")],
+        [InlineKeyboardButton("🇺🇸 English", callback_data="lang")]
     ]
 
-    await query.edit_message_text("اختار المنصة 📱", reply_markup=InlineKeyboardMarkup(keyboard))
+    await update.message.reply_text(
+        "🌍 Welcome / اختار اللغة:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
 
+# ================= LANG =================
+async def lang(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+
+    keyboard = [[InlineKeyboardButton(p, callback_data=f"platform_{p}")] for p in PLATFORMS]
+
+    await q.edit_message_text(
+        "📱 اختر المنصة:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
 
 # ================= PLATFORM =================
 async def platform(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
+    q = update.callback_query
+    await q.answer()
 
-    user_state[query.from_user.id]["platform"] = query.data
+    p = q.data.replace("platform_", "")
+    context.user_data["platform"] = p
 
-    keyboard = [
-        [InlineKeyboardButton("🔙 رجوع", callback_data="back")]
-    ]
-
-    await query.edit_message_text("ابعت لينك أو بحث 🔎", reply_markup=InlineKeyboardMarkup(keyboard))
-
-
-# ================= BACK =================
-async def back(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-
-    await language(update, context)
-
-
-# ================= MESSAGE =================
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text
-    user_id = update.message.from_user.id
-
-    if user_id not in user_state:
-        return
-
-    user_state[user_id]["input"] = text
-
-    keyboard = [
-        [InlineKeyboardButton("160p", callback_data="q_160"),
-         InlineKeyboardButton("360p", callback_data="q_360")],
-        [InlineKeyboardButton("480p", callback_data="q_480"),
-         InlineKeyboardButton("720p", callback_data="q_720")],
-        [InlineKeyboardButton("1080p", callback_data="q_1080")],
-        [InlineKeyboardButton("🎵 MP3", callback_data="mp3")]
-    ]
-
-    await update.message.reply_text("🎯 اختار:", reply_markup=InlineKeyboardMarkup(keyboard))
-
+    if p == "YouTube":
+        await q.edit_message_text("🔎 ابعت اسم الفيديو أو الرابط:")
+    else:
+        await q.edit_message_text(f"⚡ {p} (روابط فقط حالياً)")
 
 # ================= SEARCH =================
-async def search(update, query, data):
-    with yt_dlp.YoutubeDL({"quiet": True}) as ydl:
-        result = ydl.extract_info(f"ytsearch5:{data}", download=False)
-
-    vids = result["entries"]
-    search_results[query.from_user.id] = vids
-
-    keyboard = [[InlineKeyboardButton(v["title"][:40], callback_data=f"vid_{i}")] for i, v in enumerate(vids)]
-
-    await query.message.reply_text("🔎 نتائج:", reply_markup=InlineKeyboardMarkup(keyboard))
-
-
-# ================= SPLIT =================
-def split_video(file_path):
-    parts = []
-    duration = 300
-
-    for i in range(5):
-        out = f"{file_path}_part{i}.mp4"
-
-        subprocess.call([
-            "ffmpeg",
-            "-y",
-            "-i", file_path,
-            "-ss", str(i * duration),
-            "-t", str(duration),
-            out
-        ])
-
-        if os.path.exists(out):
-            parts.append(out)
-
-    return parts
-
-
-# ================= MERGE =================
-def merge(parts, output):
-    file_list = "list.txt"
-
-    with open(file_list, "w") as f:
-        for p in parts:
-            f.write(f"file '{os.path.abspath(p)}'\n")
-
-    subprocess.call([
-        "ffmpeg",
-        "-y",
-        "-f", "concat",
-        "-safe", "0",
-        "-i", file_list,
-        "-c", "copy",
-        output
-    ])
-
-    os.remove(file_list)
-
-
-# ================= QUEUE =================
-async def run_queue():
-    global processing
-
-    if processing:
+async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if context.user_data.get("platform") != "YouTube":
         return
 
-    processing = True
+    query = update.message.text
+    user_id = update.effective_user.id
 
-    while queue:
-        update, context, data, quality, is_search = queue.popleft()
+    inc_search(user_id)
 
-        try:
-            await run_core(update, context, data, quality, is_search)
-        except:
-            pass
+    await update.message.reply_text("🔎 Searching...")
 
-    processing = False
+    results = search_youtube(query)
+    context.user_data["results"] = results
 
+    keyboard = [
+        [InlineKeyboardButton(v["title"][:40], callback_data=f"v_{i}")]
+        for i, v in enumerate(results)
+    ]
 
-# ================= CORE =================
-async def run_core(update, context, data, quality, is_search):
-    query = update.callback_query
+    await update.message.reply_text(
+        "🎬 Results:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
 
-    if is_search:
-        await search(update, query, data)
-        return
+# ================= VIDEO =================
+async def video(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
 
-    await query.message.reply_text("⏳ جاري التحميل...")
+    idx = int(q.data.split("_")[1])
+    v = context.user_data["results"][idx]
 
-    opts = {
-        "outtmpl": f"{DOWNLOAD_FOLDER}/%(title)s.%(ext)s",
-        "quiet": True,
-        "noplaylist": True
-    }
+    context.user_data["video"] = v
 
-    if quality == "mp3":
-        opts["format"] = "bestaudio"
-    else:
-        opts["format"] = f"bestvideo[height<={quality}]+bestaudio/best"
+    keyboard = [
+        [InlineKeyboardButton("360p", callback_data="q_360")],
+        [InlineKeyboardButton("480p", callback_data="q_480")],
+        [InlineKeyboardButton("720p", callback_data="q_720")],
+        [InlineKeyboardButton("1080p", callback_data="q_1080")],
+        [InlineKeyboardButton("🎵 MP3 (UI)", callback_data="mp3")],
+    ]
 
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        info = ydl.extract_info(data, download=True)
-        file_path = ydl.prepare_filename(info)
+    await q.edit_message_text(
+        f"""🎬 {v['title']}
 
-    size = os.path.getsize(file_path) / (1024 * 1024)
+👁 {v['views']}
+⏱ {v['duration']}
 
-    # ================= SPLIT =================
-    if size > 50 and quality != "mp3":
-        parts = split_video(file_path)
-        user_state[query.from_user.id]["parts"] = parts
-
-        for p in parts:
-            with open(p, "rb") as f:
-                await query.message.reply_document(f)
-            os.remove(p)
-
-        os.remove(file_path)
-
-        keyboard = [[InlineKeyboardButton("📦 دمج الفيديو", callback_data="merge")]]
-
-        await query.message.reply_text("📦 تم التقسيم", reply_markup=InlineKeyboardMarkup(keyboard))
-
-    else:
-        with open(file_path, "rb") as f:
-            await query.message.reply_document(f)
-
-        os.remove(file_path)
-
+اختار الجودة:""",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
 
 # ================= QUALITY =================
 async def quality(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
+    q = update.callback_query
+    await q.answer()
 
-    user_id = query.from_user.id
-    data = user_state[user_id]["input"]
-    choice = query.data
+    v = context.user_data.get("video")
 
-    quality = "mp3" if choice == "mp3" else choice.split("_")[1]
-    is_search = not data.startswith("http")
-
-    queue.append((update, context, data, quality, is_search))
-
-    await query.edit_message_text("📥 في الطابور...")
-
-    asyncio.create_task(run_queue())
-
-
-# ================= SELECT VIDEO =================
-async def select_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-
-    i = int(query.data.split("_")[1])
-    vid = search_results[query.from_user.id][i]
-
-    url = vid["webpage_url"]
-    user_state[query.from_user.id]["input"] = url
-
-    keyboard = [
-        [InlineKeyboardButton("160p", callback_data="q_160"),
-         InlineKeyboardButton("360p", callback_data="q_360")],
-        [InlineKeyboardButton("720p", callback_data="q_720"),
-         InlineKeyboardButton("1080p", callback_data="q_1080")],
-        [InlineKeyboardButton("🎵 MP3", callback_data="mp3")]
-    ]
-
-    await query.edit_message_text("🎬 الجودة:", reply_markup=InlineKeyboardMarkup(keyboard))
-
-
-# ================= MERGE =================
-async def merge_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-
-    parts = user_state.get(query.from_user.id, {}).get("parts")
-
-    if not parts:
-        await query.message.reply_text("❌ مفيش ملفات")
+    if q.data == "mp3":
+        await q.edit_message_text("🎵 MP3 selected (UI only)")
         return
 
-    out = f"{DOWNLOAD_FOLDER}/merged.mp4"
-    merge(parts, out)
+    quality = q.data.split("_")[1]
 
-    with open(out, "rb") as f:
-        await query.message.reply_document(f)
+    await q.edit_message_text(
+        f"""📥 Selected: {quality}
 
-    os.remove(out)
+🎬 {v['title']}
 
+⚠️ UI mode only"""
+    )
 
-# ================= APP =================
-app = Application.builder().token(BOT_TOKEN).build()
+# ================= ADMIN =================
+async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
 
-app.add_handler(CommandHandler("start", start))
-app.add_handler(CallbackQueryHandler(language, pattern="lang"))
-app.add_handler(CallbackQueryHandler(platform, pattern="^(yt|tt|ig)$"))
-app.add_handler(CallbackQueryHandler(back, pattern="back"))
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-app.add_handler(CallbackQueryHandler(quality, pattern="^(q_|mp3)$"))
-app.add_handler(CallbackQueryHandler(select_video, pattern="^vid_"))
-app.add_handler(CallbackQueryHandler(merge_handler, pattern="merge"))
+    s = stats()
 
-print("Bot Running...")
-app.run_polling()
+    await update.message.reply_text(
+        f"""📊 BOT STATS
+
+👥 Users: {s['users']}
+🔎 Searches: {s['searches']}"""
+    )
+
+# ================= MAIN =================
+def main():
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("admin", admin))
+
+    app.add_handler(CallbackQueryHandler(lang, pattern="lang"))
+    app.add_handler(CallbackQueryHandler(platform, pattern="platform_"))
+    app.add_handler(CallbackQueryHandler(video, pattern="v_"))
+    app.add_handler(CallbackQueryHandler(quality, pattern="q_"))
+    app.add_handler(CallbackQueryHandler(quality, pattern="mp3"))
+
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
+
+    print("PRO MAX BOT RUNNING...")
+    app.run_polling()
+
+if __name__ == "__main__":
+    main()
