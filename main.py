@@ -1,162 +1,153 @@
-import logging
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
-from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
-from youtubesearchpython import VideosSearch
+import os
 import yt_dlp
+import logging
 
-TOKEN = "PUT_YOUR_BOT_TOKEN"
+from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup
+from telegram.ext import (
+    Application, CommandHandler, MessageHandler,
+    CallbackQueryHandler, ContextTypes, filters
+)
+
+TOKEN = os.getenv("BOT_TOKEN")
 
 logging.basicConfig(level=logging.INFO)
 
-# ---------------- KEYBOARDS ---------------- #
+# ---------------- UI ---------------- #
 
-main_keyboard = ReplyKeyboardMarkup(
+main_kb = ReplyKeyboardMarkup(
     [["Restart", "Language"], ["Help"]],
     resize_keyboard=True
 )
 
-language_keyboard = InlineKeyboardMarkup([
-    [InlineKeyboardButton("🇪🇬 عربي", callback_data="lang_ar")],
-    [InlineKeyboardButton("🇬🇧 English", callback_data="lang_en")]
+lang_kb = InlineKeyboardMarkup([
+    [InlineKeyboardButton("🇪🇬 عربي", callback_data="ar")],
+    [InlineKeyboardButton("🇬🇧 English", callback_data="en")]
 ])
 
-quality_keyboard = InlineKeyboardMarkup([
-    [InlineKeyboardButton("160p", callback_data="q_160"),
-     InlineKeyboardButton("360p", callback_data="q_360")],
-    [InlineKeyboardButton("720p", callback_data="q_720"),
-     InlineKeyboardButton("1080p", callback_data="q_1080")],
-    [InlineKeyboardButton("🎵 MP3", callback_data="q_mp3")]
+quality_kb = InlineKeyboardMarkup([
+    [InlineKeyboardButton("160p", callback_data="160"),
+     InlineKeyboardButton("360p", callback_data="360")],
+    [InlineKeyboardButton("720p", callback_data="720"),
+     InlineKeyboardButton("1080p", callback_data="1080")],
+    [InlineKeyboardButton("🎵 MP3", callback_data="mp3")]
 ])
 
 # ---------------- START ---------------- #
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "اختار اللغة 🌍",
-        reply_markup=language_keyboard
-    )
+    await update.message.reply_text("🌍 اختار اللغة", reply_markup=lang_kb)
 
 # ---------------- LANGUAGE ---------------- #
 
-async def language_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
+async def language(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
 
-    context.user_data["lang"] = query.data
+    context.user_data["lang"] = q.data
 
-    await query.message.reply_text(
-        "📩 ابعت الرابط أو اكتب كلمة بحث",
-        reply_markup=main_keyboard
+    await q.message.reply_text(
+        "📩 ابعت رابط فيديو أو اكتب بحث",
+        reply_markup=main_kb
     )
 
-# ---------------- MESSAGE HANDLER ---------------- #
+# ---------------- SEARCH YOUTUBE ---------------- #
 
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text
+def yt_search(query):
+    import requests
 
-    # Restart
-    if text == "Restart":
-        await start(update, context)
-        return
-
-    # Help
-    if text == "Help":
-        await update.message.reply_text(
-            "📌 طريقة الاستخدام:\n\n"
-            "1- ابعت رابط فيديو\n"
-            "2- أو اكتب كلمة بحث\n"
-            "3- اختار الجودة\n\n"
-            "📩 الدعم: mohamedeslammaklad700@gmail.com"
-        )
-        return
-
-    # Search (no link)
-    if "http" not in text:
-        results = VideosSearch(text, limit=4).result()["result"]
-
-        msg = f'📋┃نتائج البحث عن "{text}"\n\n'
-
-        for i, r in enumerate(results):
-            msg += (
-                f"🎬 {r['title']}\n"
-                f"👤 {r['channel']['name']}\n"
-                f"🕑 {r['duration']} - 👁 {r['viewCount']['short']}\n"
-                f"🔗 /dl_{r['id']}\n\n"
-            )
-
-        await update.message.reply_text(msg)
-        return
-
-    # If link
-    context.user_data["url"] = text
-
-    await update.message.reply_text(
-        "اختار الجودة 🎥",
-        reply_markup=quality_keyboard
-    )
+    search_url = f"https://www.youtube.com/results?search_query={query}"
+    return search_url
 
 # ---------------- DOWNLOAD ---------------- #
 
-def download_video(url, quality):
+def download(url, quality):
     ydl_opts = {
-        "format": "best",
-        "outtmpl": "video.mp4"
+        "outtmpl": "video.%(ext)s",
+        "quiet": True
     }
 
     if quality == "mp3":
-        ydl_opts = {
-            "format": "bestaudio",
-            "outtmpl": "audio.mp3",
+        ydl_opts.update({
+            "format": "bestaudio/best",
             "postprocessors": [{
                 "key": "FFmpegExtractAudio",
                 "preferredcodec": "mp3",
             }]
-        }
-
-    elif quality == "160":
-        ydl_opts["format"] = "worst[height<=160]"
-    elif quality == "360":
-        ydl_opts["format"] = "best[height<=360]"
-    elif quality == "720":
-        ydl_opts["format"] = "best[height<=720]"
-    elif quality == "1080":
-        ydl_opts["format"] = "best[height<=1080]"
+        })
+    else:
+        ydl_opts["format"] = f"best[height<={quality}]"
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         ydl.download([url])
 
+# ---------------- MESSAGE ---------------- #
+
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+
+    if text == "Restart":
+        return await start(update, context)
+
+    if text == "Help":
+        return await update.message.reply_text(
+            "📌 ابعت رابط أو كلمة بحث\n📩 support: mohamedeslammaklad700@gmail.com"
+        )
+
+    # SEARCH MODE
+    if "http" not in text:
+        await update.message.reply_text(
+            f"📋┃نتائج البحث عن \"{text}\"\n\n"
+            f"🔎 https://www.youtube.com/results?search_query={text}"
+        )
+        return
+
+    # LINK MODE
+    context.user_data["url"] = text
+    await update.message.reply_text("🎥 اختار الجودة:", reply_markup=quality_kb)
+
 # ---------------- CALLBACK ---------------- #
 
-async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
+async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
 
-    data = query.data
+    data = q.data
 
-    # language handled above
-    if data.startswith("lang"):
-        return
+    # language
+    if data in ["ar", "en"]:
+        return await language(update, context)
 
     url = context.user_data.get("url")
 
     if not url:
-        await query.message.reply_text("ابعت لينك الأول")
-        return
+        return await q.message.reply_text("ابعت لينك الأول")
 
-    quality = data.split("_")[1]
+    await q.message.reply_text("⏳ جاري التحميل...")
 
-    await query.message.reply_text("⏳ جاري التحميل...")
+    try:
+        download(url, data)
 
-    download_video(url, quality)
+        file = "video.mp4" if data != "mp3" else "video.mp3"
 
-    await query.message.reply_document(document=open("video.mp4", "rb"))
+        with open(file, "rb") as f:
+            await q.message.reply_document(f)
+
+    except Exception as e:
+        await q.message.reply_text(f"❌ Error: {str(e)}")
 
 # ---------------- MAIN ---------------- #
 
-app = Application.builder().token(TOKEN).build()
+def main():
+    if not TOKEN:
+        raise Exception("BOT_TOKEN missing in Railway")
 
-app.add_handler(CommandHandler("start", start))
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-app.add_handler(CallbackQueryHandler(callback_handler))
+    app = Application.builder().token(TOKEN).build()
 
-app.run_polling()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app.add_handler(CallbackQueryHandler(callback))
+
+    app.run_polling()
+
+if __name__ == "__main__":
+    main()
