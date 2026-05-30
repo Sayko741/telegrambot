@@ -10,9 +10,11 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-# ================= GEMINI SETUP =================
-genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel("gemini-1.5-flash")
+# ================= GEMINI =================
+model = None
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
+    model = genai.GenerativeModel("gemini-1.5-flash")
 
 # ================= STATE =================
 user_state = {}
@@ -20,15 +22,15 @@ user_state = {}
 # ================= AI =================
 async def ai_reply(text):
     try:
-        if not GEMINI_API_KEY:
-            return "❌ GEMINI API KEY مش موجود"
+        if model is None:
+            return "❌ AI غير مفعل (حط GEMINI_API_KEY)"
 
         response = model.generate_content(text)
         return response.text
 
     except Exception as e:
         print("GEMINI ERROR:", e)
-        return "❌ AI مش شغال حالياً"
+        return "❌ AI حصل فيه مشكلة"
 
 
 # ================= MENUS =================
@@ -61,7 +63,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🌍 اختر اللغة", reply_markup=lang_menu())
 
 
-# ================= BUTTONS =================
+# ================= CALLBACKS =================
 async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
@@ -151,6 +153,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ================= SEARCH =================
     if mode == "search":
+
         try:
             r = requests.get("https://www.googleapis.com/youtube/v3/search", params={
                 "part": "snippet",
@@ -162,4 +165,34 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             data = r.json()
 
-            msg
+            msg = f'📋┃نتائج البحث عن "{text}"\n\n'
+
+            for i in data.get("items", []):
+                vid = i["id"]["videoId"]
+                title = i["snippet"]["title"]
+                channel = i["snippet"]["channelTitle"]
+
+                msg += f"""🎬 {title}
+👤 {channel}
+🔗 /dl_{vid}
+
+"""
+
+            await update.message.reply_text(msg)
+
+        except Exception as e:
+            print("SEARCH ERROR:", e)
+            await update.message.reply_text("Search error ❌")
+
+
+# ================= APP =================
+os.makedirs("downloads", exist_ok=True)
+
+app = Application.builder().token(BOT_TOKEN).build()
+
+app.add_handler(CommandHandler("start", start))
+app.add_handler(CallbackQueryHandler(buttons))
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
+
+print("Bot Running...")
+app.run_polling()
