@@ -1,2 +1,11 @@
 [phases.setup]
-aptPkgs = ["ffmpeg"]
+npmConfig = ""
+
+[phases.build]
+command = "pip install -r requirements.txt"
+
+[Start]
+run = "python main.py"
+
+[apt]
+packages = ["ffmpeg"]
