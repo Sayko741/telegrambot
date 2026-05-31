@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Telegram Bot - Working version"""
+"""Telegram Bot - Clean & Working"""
 
 import os
 import sys
@@ -10,206 +10,341 @@ from telegram.ext import Application, CommandHandler, CallbackQueryHandler, Mess
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 
-logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s", level=logging.INFO, stream=sys.stdout)
+logging.basicConfig(
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    level=logging.INFO,
+    stream=sys.stdout
+)
 logger = logging.getLogger(__name__)
 
-user_data = {}
+# ==================== STATE ====================
+class UserState:
+    def __init__(self):
+        self.lang = None
+        self.action = None
+        self.link = None
+        self.video_id = None
+        self.search_results = []
 
-def get_state(user_id):
-    if user_id not in user_data:
-        user_data[user_id] = {"lang": None, "link": None, "video_id": None, "action": None}
-    return user_data[user_id]
+user_states = {}
 
+def get_user(user_id):
+    if user_id not in user_states:
+        user_states[user_id] = UserState()
+    return user_states[user_id]
+
+# ==================== MESSAGES ====================
 MSG = {
-    "ar": {"welcome": "اختر اللغة:", "selected": "✅ تم", "want": "📌 أرسل رابط أو ابحث:", "link": "🔗 أرسل رابط", "search": "🔍 ابحث", "enter_link": "أرسل الرابط:", "enter_search": "أدخل اسم الفيديو:", "down": "⏳ جاري...", "done": "✅ تم!", "error": "❌ خطأ", "no_result": "❌ لا توجد نتائج"},
-    "en": {"welcome": "Choose language:", "selected": "✅ Selected", "want": "📌 Send link or search:", "link": "🔗 Send link", "search": "🔍 Search", "enter_link": "Send link:", "enter_search": "Enter video name:", "down": "⏳ Downloading...", "done": "✅ Done!", "error": "❌ Error", "no_result": "❌ No results"}
+    "ar": {
+        "welcome": "🎬 أهلاً! اختر لغتك:",
+        "selected": "✅ تم اختيار اللغة",
+        "main": "📎 أرسل رابط للتحميل أو اكتب اسم للبحث:",
+        "download": "⏳ جاري التحميل...",
+        "done": "✅ تم التحميل بنجاح!",
+        "error": "❌ حدث خطأ. تحقق من الرابط وحاول снова",
+        "no_result": "❌ لم يتم العثور على نتائج",
+        "search": "⏳ جاري البحث...",
+        "select": "🎬 اختر فيديو للتحميل:"
+    },
+    "en": {
+        "welcome": "🎬 Hello! Choose language:",
+        "selected": "✅ Language selected",
+        "main": "📎 Send link to download or type to search:",
+        "download": "⏳ Downloading...",
+        "done": "✅ Downloaded successfully!",
+        "error": "❌ Error. Check link and try again",
+        "no_result": "❌ No results found",
+        "search": "⏳ Searching...",
+        "select": "🎬 Select video to download:"
+    }
 }
 
+# ==================== KEYBOARDS ====================
 def kb_lang():
-    return InlineKeyboardMarkup([[InlineKeyboardButton("🇸🇦 العربية", callback_data="la"), InlineKeyboardButton("🇬🇧 English", callback_data="le")]])
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🇸🇦 العربية", callback_data="lang_ar")],
+        [InlineKeyboardButton("🇬🇧 English", callback_data="lang_en")]
+    ])
 
-def kb_want(lang):
-    return InlineKeyboardMarkup([[InlineKeyboardButton(MSG[lang]["link"], callback_data="dl")], [InlineKeyboardButton(MSG[lang]["search"], callback_data="ds")]])
+def kb_mp3():
+    """MP3 or Video download option"""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📥 تحميل Video", callback_data="dl_video")],
+        [InlineKeyboardButton("🎵 تحميل MP3", callback_data="dl_mp3")],
+        [InlineKeyboardButton("⬅️ رجوع", callback_data="dl_back")]
+    ])
 
-def kb_download():
-    return InlineKeyboardMarkup([[InlineKeyboardButton("📥 Video", callback_data="d_video")], [InlineKeyboardButton("🎵 MP3", callback_data="d_mp3")], [InlineKeyboardButton("⬅️ Back", callback_data="db")]])
-
+# ==================== DOWNLOAD ====================
 async def download_media(url, mp3=False):
     import yt_dlp
+    
     folder = "/tmp"
     os.makedirs(folder, exist_ok=True)
+    
     try:
-        opts = {"format": "bestaudio" if mp3 else "best", "outtmpl": f"{folder}/%(id)s.%(ext)s", "quiet": True}
-        if mp3:
-            opts["postprocessors"] = [{"key": "FFmpegExtractAudio", "preferredcodec": "mp3"}]
-        
         try:
             loop = asyncio.get_event_loop()
-        except:
+        except RuntimeError:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
         
-        with yt_dlp.YoutubeDL(opts) as ydl:
+        if mp3:
+            ydl_opts = {
+                "format": "bestaudio",
+                "outtmpl": f"{folder}/%(id)s.%(ext)s",
+                "quiet": True,
+                "no_warnings": True,
+                "postprocessors": [{
+                    "key": "FFmpegExtractAudio",
+                    "preferredcodec": "mp3",
+                    "preferredquality": "192"
+                }]
+            }
+        else:
+            ydl_opts = {
+                "format": "best",
+                "outtmpl": f"{folder}/%(id)s.%(ext)s",
+                "quiet": True,
+                "no_warnings": True,
+            }
+        
+        logger.info(f"Downloading: {url}, mp3={mp3}")
+        
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = await loop.run_in_executor(None, ydl.extract_info, url)
-            if not info:
+            if info is None:
                 return None
-            file = ydl.prepare_filename(info)
+            
+            filename = ydl.prepare_filename(info)
+            
             if mp3:
-                await asyncio.sleep(0.5)
-                file = file.rsplit(".", 1)[0] + ".mp3"
-            return file if os.path.exists(file) else None
+                await asyncio.sleep(1.5)
+                base = filename.rsplit(".", 1)[0]
+                mp3_file = base + ".mp3"
+                if os.path.exists(mp3_file):
+                    return mp3_file
+                # Find any mp3 in folder
+                for f in os.listdir(folder):
+                    if f.endswith(".mp3"):
+                        return os.path.join(folder, f)
+                return filename if os.path.exists(filename) else None
+            
+            return filename if os.path.exists(filename) else None
+            
     except Exception as e:
-        logger.error(f"DL error: {e}")
+        logger.error(f"Download error: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
-async def search_videos(q):
+# ==================== SEARCH ====================
+async def search_media(query):
     import yt_dlp
+    
     try:
         try:
             loop = asyncio.get_event_loop()
-        except:
+        except RuntimeError:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
         
-        with yt_dlp.YoutubeDL({"quiet": True}) as ydl:
-            info = await loop.run_in_executor(None, ydl.extract_info, f"ytsearch5:{q}")
+        ydl_opts = {"quiet": True, "no_warnings": True}
+        
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = await loop.run_in_executor(None, ydl.extract_info, f"ytsearch10:{query}")
+            
             if info and "entries" in info:
-                return [{"t": e.get("title", ""), "c": e.get("uploader", ""), "i": e.get("id", "")} for e in info["entries"]]
+                return [
+                    {
+                        "title": e.get("title", "Unknown"),
+                        "channel": e.get("uploader", "Unknown"),
+                        "duration": e.get("duration", 0),
+                        "views": e.get("view_count", 0),
+                        "video_id": e.get("id", ""),
+                        "thumbnail": e.get("thumbnail", "")
+                    }
+                    for e in info["entries"]
+                ]
     except Exception as e:
         logger.error(f"Search error: {e}")
+    
     return []
 
-async def start(update, context):
-    uid = update.effective_user.id
-    st = get_state(uid)
-    if not st["lang"]:
+def format_duration(seconds):
+    if not seconds:
+        return "0:00"
+    m, s = divmod(int(seconds), 60)
+    h, m = divmod(m, 60)
+    if h > 0:
+        return f"{h}:{m:02d}:{s:02d}"
+    return f"{m}:{s:02d}"
+
+def format_views(views):
+    if not views:
+        return "0"
+    if views >= 1_000_000:
+        return f"{views/1_000_000:.1f}M"
+    if views >= 1_000:
+        return f"{views/1_000:.1f}K"
+    return str(views)
+
+# ==================== HANDLERS ====================
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = get_user(update.effective_user.id)
+    
+    if user.lang is None:
         await update.message.reply_text(MSG["ar"]["welcome"], reply_markup=kb_lang())
     else:
-        await update.message.reply_text(MSG[st["lang"]]["want"], reply_markup=kb_want(st["lang"]))
+        await update.message.reply_text(MSG[user.lang]["main"])
 
-async def lang_cb(update, context):
-    q = update.callback_query
-    await q.answer()
-    uid = q.from_user.id
-    st = get_state(uid)
-    st["lang"] = q.data[0] + "r"
-    await q.edit_message_text(MSG[st["lang"]]["selected"])
-    await q.message.reply_text(MSG[st["lang"]]["want"], reply_markup=kb_want(st["lang"]))
+async def lang_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    user = get_user(query.from_user.id)
+    
+    # Set language
+    user.lang = "ar" if query.data == "lang_ar" else "en"
+    
+    await query.edit_message_text(MSG[user.lang]["selected"])
+    await query.message.reply_text(MSG[user.lang]["main"])
 
-async def action_cb(update, context):
-    q = update.callback_query
-    await q.answer()
-    uid = q.from_user.id
-    st = get_state(uid)
-    lang = st["lang"] or "en"
+async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = get_user(update.effective_user.id)
+    lang = user.lang or "en"
+    text = update.message.text
     
-    if q.data == "dl":
-        st["action"] = "link"
-        await q.edit_message_text(MSG[lang]["enter_link"])
-    elif q.data == "ds":
-        st["action"] = "search"
-        await q.edit_message_text(MSG[lang]["enter_search"])
-
-async def msg_h(update, context):
-    uid = update.effective_user.id
-    st = get_state(uid)
-    lang = st["lang"] or "en"
-    txt = update.message.text
+    # Check if it's a link
+    is_link = any(p in text.lower() for p in ["http", "www.", ".com", ".be", ".to/", "fb.watch", "youtu.be", "tiktok", "instagram"])
     
-    is_link = "http" in txt.lower() or "www" in txt.lower()
-    
-    if st["action"] == "link" and is_link:
-        st["link"] = txt
-        await update.message.reply_text(MSG[lang]["down"])
-        f = await download_media(txt)
-        if f and os.path.exists(f):
-            await update.message.reply_video(open(f, "rb"))
-            os.remove(f)
-            await update.message.reply_text(MSG[lang]["done"])
+    if is_link:
+        # It's a link - download immediately
+        await update.message.reply_text(MSG[lang]["download"])
+        
+        filename = await download_media(text, mp3=False)
+        
+        if filename and os.path.exists(filename):
+            try:
+                await update.message.reply_video(open(filename, "rb"))
+                os.remove(filename)
+                await update.message.reply_text(MSG[lang]["done"])
+            except Exception as e:
+                logger.error(f"Send error: {e}")
+                await update.message.reply_text(MSG[lang]["error"])
         else:
             await update.message.reply_text(MSG[lang]["error"])
     
-    elif st["action"] == "search":
-        await update.message.reply_text("⏳ Searching...")
-        results = await search_videos(txt)
+    else:
+        # Not a link - search YouTube
+        await update.message.reply_text(MSG[lang]["search"])
+        
+        results = await search_media(text)
+        
         if not results:
             await update.message.reply_text(MSG[lang]["no_result"])
             return
         
-        txt_resp = f'📋┃"{txt}"\n\n'
-        for v in results:
-            txt_resp += f"🎬 {v['t']}\n👤 {v['c']}\n\n"
+        user.search_results = results
         
-        btns = [[InlineKeyboardButton(f"▶️ {v['t'][:25]}...", callback_data=f"v_{v['i']}")] for v in results]
-        await update.message.reply_text(txt_resp, reply_markup=InlineKeyboardMarkup(btns))
-    
-    elif st["action"] == "link" and not is_link:
-        await update.message.reply_text(MSG[lang]["enter_link"])
-    
-    else:
-        await update.message.reply_text(MSG[lang]["want"], reply_markup=kb_want(lang))
+        # Nice formatted results
+        msg_text = f"📋 ┃ Results for \"{text}\"\n"
+        msg_text += "━" * 25 + "\n\n"
+        
+        # Create buttons with nice format
+        buttons = []
+        for i, v in enumerate(results[:7], 1):
+            title = v['title'][:40] if len(v['title']) > 40 else v['title']
+            duration = format_duration(v.get('duration', 0))
+            views = format_views(v.get('views', 0))
+            
+            # Format message for each result
+            msg_text += f"{i}️⃣ {v['title']}\n"
+            msg_text += f"   👤 {v['channel']} • 🕑 {duration} • 👁 {views}\n"
+            msg_text += f"   🎬 /watch?v={v['video_id']}\n\n"
+            
+            # Button with index
+            buttons.append([
+                InlineKeyboardButton(
+                    f"▶️ {i} - {title[:25]}...",
+                    callback_data=f"vid_{v['video_id']}"
+                )
+            ])
+        
+        await update.message.reply_text(msg_text, reply_markup=InlineKeyboardMarkup(buttons))
 
-async def video_cb(update, context):
-    q = update.callback_query
-    await q.answer()
-    uid = q.from_user.id
-    st = get_state(uid)
-    lang = st["lang"] or "en"
+async def video_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
     
-    st["video_id"] = q.data.replace("v_", "")
-    await q.edit_message_text(MSG[lang]["down"], reply_markup=kb_download())
+    user = get_user(query.from_user.id)
+    lang = user.lang or "en"
+    
+    # Get video ID
+    video_id = query.data.replace("vid_", "")
+    user.video_id = video_id
+    
+    # Show download options
+    await query.edit_message_text(
+        MSG[lang]["select"],
+        reply_markup=kb_mp3()
+    )
 
-async def dl_cb(update, context):
-    q = update.callback_query
-    await q.answer()
-    uid = q.from_user.id
-    st = get_state(uid)
-    lang = st["lang"] or "en"
+async def download_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
     
-    if q.data == "db":
-        st["link"] = None
-        st["video_id"] = None
-        st["action"] = None
-        await q.edit_message_text(MSG[lang]["want"], reply_markup=kb_want(lang))
+    user = get_user(query.from_user.id)
+    lang = user.lang or "en"
+    
+    # Back button
+    if query.data == "dl_back":
+        user.video_id = None
+        await query.edit_message_text(MSG[lang]["main"])
         return
     
-    mp3 = q.data == "d_mp3"
-    await q.edit_message_text(MSG[lang]["down"])
+    # Determine MP3 or Video
+    mp3 = (query.data == "dl_mp3")
     
-    url = st["link"] or (f"https://youtube.com/watch?v={st['video_id']}" if st["video_id"] else None)
+    # Build URL
+    url = user.video_id
+    if not url.startswith("http"):
+        url = f"https://www.youtube.com/watch?v={user.video_id}"
     
-    if not url:
-        await q.message.reply_text(MSG[lang]["error"])
-        return
+    await query.edit_message_text(MSG[lang]["download"])
     
-    f = await download_media(url, mp3)
-    if f and os.path.exists(f):
+    # Download
+    filename = await download_media(url, mp3=mp3)
+    
+    if filename and os.path.exists(filename):
         try:
             if mp3:
-                await q.message.reply_audio(open(f, "rb"))
+                await query.message.reply_audio(open(filename, "rb"))
             else:
-                await q.message.reply_video(open(f, "rb"))
-            os.remove(f)
-            await q.message.reply_text(MSG[lang]["done"])
+                await query.message.reply_video(open(filename, "rb"))
+            os.remove(filename)
+            await query.message.reply_text(MSG[lang]["done"])
         except Exception as e:
             logger.error(f"Send error: {e}")
-            await q.message.reply_text(MSG[lang]["error"])
+            await query.message.reply_text(MSG[lang]["error"])
     else:
-        await q.message.reply_text(MSG[lang]["error"])
+        await query.message.reply_text(MSG[lang]["error"])
 
-async def err(update, context):
+async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.error(f"Error: {context.error}")
 
+# ==================== MAIN ====================
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(lang_cb, pattern="^l[a,e]$"))
-    app.add_handler(CallbackQueryHandler(action_cb, pattern="^d[l,s]$"))
-    app.add_handler(CallbackQueryHandler(video_cb, pattern="^v_"))
-    app.add_handler(CallbackQueryHandler(dl_cb, pattern="^d_"))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, msg_h))
-    app.add_error_handler(err)
-    print("🤖 Running...")
+    
+    # Handlers
+    app.add_handler(CommandHandler("start", start_command))
+    app.add_handler(CallbackQueryHandler(lang_callback, pattern="^lang_"))
+    app.add_handler(CallbackQueryHandler(video_callback, pattern="^vid_"))
+    app.add_handler(CallbackQueryHandler(download_callback, pattern="^dl_"))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
+    app.add_error_handler(error_handler)
+    
+    print("🤖 Bot running...")
     app.run_polling()
 
 if __name__ == "__main__":
