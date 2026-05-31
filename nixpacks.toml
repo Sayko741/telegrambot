@@ -1,5 +1,8 @@
 [phases.setup]
-buildCommand = "pip install -r requirements.txt && apt-get install -y ffmpeg"
+npmConfig = ""
+
+[phases.build]
+command = "pip install python-telegram-bot yt-dlp"
 
 [Start]
 run = "python main.py"
