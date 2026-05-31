@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Telegram Bot - All platforms (YouTube, TikTok, Facebook, Instagram, Twitter)"""
+"""Telegram Bot - Fixed search flow"""
 
 import os
 import asyncio
@@ -21,7 +21,7 @@ class UserState:
         self.current_link = None
         self.search_results = []
         self.current_video_id = None
-        self.waiting_for_link = False
+        self.action = None  # "send_link" or "search"
 
 user_states = {}
 
@@ -35,26 +35,32 @@ MESSAGES = {
     "ar": {
         "welcome": "مرحباً! اختر لغتك:", 
         "language_selected": "✅ تم اختيار العربية",
-        "main_menu": "📎 أرسل رابطاً للتحميل، أو ابحث:",
-        "select_quality": "🎬 اختر الجودة:", 
+        "send_or_search": "📎 ماذا تريد؟",
+        "send_link_btn": "🔗 أرسل رابط",
+        "search_btn": "🔍 بحث",
+        "enter_link": "📎 أرسل الرابط للتحميل:",
+        "enter_search": "📝 أدخل اسم الفيديو للبحث:",
         "downloading": "⏳ جاري التحميل...",
         "converting": "⏳ جاري التحويل...", 
         "no_results": "❌ لا توجد نتائج", 
         "error": "❌ خطأ. تحقق من الرابط",
         "success": "✅ تم الإرسال بنجاح!",
-        "help_text": "📌 طريقة الاستخدام:\n1️⃣ اختر لغتك\n2️⃣ أرسل رابط (يوتيوب، تيك توك، فيسبوك، انستغرام، تويتر)\n3️⃣ اختر الجودة/حمل الآن\n📧 للتواصل: mohamedeslammaklad700@gmail.com",
+        "select_quality": "🎬 اختر الجودة أو حمل MP3:",
     },
     "en": {
         "welcome": "Hello! Choose language:", 
         "language_selected": "✅ English selected",
-        "main_menu": "📎 Send link to download, or search:",
-        "select_quality": "🎬 Select quality:", 
+        "send_or_search": "📎 What do you want?",
+        "send_link_btn": "🔗 Send link",
+        "search_btn": "🔍 Search",
+        "enter_link": "📎 Send link to download:",
+        "enter_search": "📝 Enter video name to search:",
         "downloading": "⏳ Downloading...",
         "converting": "⏳ Converting...", 
         "no_results": "❌ No results found", 
         "error": "❌ Error. Check the link",
         "success": "✅ Sent successfully!",
-        "help_text": "📌 How to use:\n1️⃣ Choose language\n2️⃣ Send link (YouTube, TikTok, Facebook, Instagram, Twitter)\n3️⃣ Select quality/download\n📧 Contact: mohamedeslammaklad700@gmail.com",
+        "select_quality": "🎬 Select quality or download MP3:",
     }
 }
 
@@ -65,35 +71,26 @@ def kb_lang():
         InlineKeyboardButton("🇬🇧 English", callback_data="lang_en")
     ]])
 
-def kb_main(lang):
-    back = "⬅️ رجوع" if lang == "ar" else "⬅️ Back"
+def kb_send_or_search(lang):
+    msg = MESSAGES[lang]
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔍 بحث" if lang == "ar" else "🔍 Search", callback_data="do_search")],
-        [InlineKeyboardButton("🔗 أرسل رابط" if lang == "ar" else "🔗 Send link", callback_data="do_link")],
-        [InlineKeyboardButton(back, callback_data="back")]
+        [InlineKeyboardButton(msg["send_link_btn"], callback_data="action_link")],
+        [InlineKeyboardButton(msg["search_btn"], callback_data="action_search")]
     ])
 
-def kb_quality_youtube(lang):
+def kb_quality(lang):
     back = "⬅️ رجوع" if lang == "ar" else "⬅️ Back"
     if lang == "ar":
         return InlineKeyboardMarkup([
             [InlineKeyboardButton("📺 144p", callback_data="q_144"), InlineKeyboardButton("📺 240p", callback_data="q_240"), InlineKeyboardButton("📺 360p", callback_data="q_360")],
             [InlineKeyboardButton("📺 480p", callback_data="q_480"), InlineKeyboardButton("📺 720p", callback_data="q_720"), InlineKeyboardButton("📺 1080p", callback_data="q_1080")],
-            [InlineKeyboardButton("🎵 MP3 فقط", callback_data="convert_mp3")],
+            [InlineKeyboardButton("🎵 تحميل MP3", callback_data="convert_mp3")],
             [InlineKeyboardButton(back, callback_data="back")]
         ])
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📺 144p", callback_data="q_144"), InlineKeyboardButton("📺 240p", callback_data="q_240"), InlineKeyboardButton("📺 360p", callback_data="q_360")],
         [InlineKeyboardButton("📺 480p", callback_data="q_480"), InlineKeyboardButton("📺 720p", callback_data="q_720"), InlineKeyboardButton("📺 1080p", callback_data="q_1080")],
-        [InlineKeyboardButton("🎵 MP3 only", callback_data="convert_mp3")],
-        [InlineKeyboardButton(back, callback_data="back")]
-    ])
-
-def kb_download():
-    back = "⬅️ رجوع" if get_user_state(0).language == "ar" else "⬅️ Back"
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📥 حمل الآن / Download", callback_data="download_best")],
-        [InlineKeyboardButton("🎵 MP3", callback_data="convert_mp3")],
+        [InlineKeyboardButton("🎵 Download MP3", callback_data="convert_mp3")],
         [InlineKeyboardButton(back, callback_data="back")]
     ])
 
@@ -108,11 +105,11 @@ def detect_platform(url):
         return "facebook"
     elif "instagram.com" in url:
         return "instagram"
-    elif "twitter.com" in url or "x.com" in url or "vxtwitter.com" in url or "fxtwitter.com" in url:
+    elif "twitter.com" in url or "x.com" in url:
         return "twitter"
     return "other"
 
-# ==================== SEARCH ====================
+# ==================== YOUTUBE SEARCH ====================
 async def search_videos(query, max_results=10):
     import yt_dlp
     try:
@@ -126,7 +123,15 @@ async def search_videos(query, max_results=10):
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = await loop.run_in_executor(None, ydl.extract_info, f"ytsearch10:{query}")
             if info and "entries" in info:
-                return [{"title": e.get("title", "Unknown"), "channel": e.get("uploader", "Unknown"), "video_id": e.get("id", ""), "url": e.get("webpage_url", "")} for e in info["entries"][:max_results]]
+                results = []
+                for e in info["entries"][:max_results]:
+                    results.append({
+                        "title": e.get("title", "Unknown"),
+                        "channel": e.get("uploader", "Unknown"),
+                        "video_id": e.get("id", ""),
+                        "url": e.get("webpage_url", "")
+                    })
+                return results
     except Exception as e:
         logger.error(f"Search error: {e}")
     return []
@@ -192,17 +197,7 @@ async def start_command(update, context):
     if state.language is None:
         await update.message.reply_text(MESSAGES["ar"]["welcome"], reply_markup=kb_lang())
     else:
-        state.waiting_for_link = False
-        await update.message.reply_text(MESSAGES[state.language]["main_menu"], reply_markup=kb_main(state.language))
-
-async def help_command(update, context):
-    lang = get_user_state(update.effective_user.id).language or "en"
-    await update.message.reply_text(MESSAGES[lang]["help_text"])
-
-async def language_command(update, context):
-    current = get_user_state(update.effective_user.id).language
-    text = "اختر اللغة:" if current == "ar" else "Select language:"
-    await update.message.reply_text(text, reply_markup=kb_lang())
+        await update.message.reply_text(MESSAGES[state.language]["send_or_search"], reply_markup=kb_send_or_search(state.language))
 
 async def lang_callback(update, context):
     query = update.callback_query
@@ -211,11 +206,11 @@ async def lang_callback(update, context):
     state = get_user_state(user_id)
     lang_code = query.data.split("_")[1]
     state.language = lang_code
-    state.waiting_for_link = False
     await query.edit_message_text(MESSAGES[lang_code]["language_selected"])
-    await query.message.reply_text(MESSAGES[lang_code]["main_menu"], reply_markup=kb_main(lang_code))
+    await query.message.reply_text(MESSAGES[lang_code]["send_or_search"], reply_markup=kb_send_or_search(lang_code))
 
-async def main_menu_callback(update, context):
+async def action_callback(update, context):
+    """Handle Send link / Search buttons"""
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
@@ -223,21 +218,80 @@ async def main_menu_callback(update, context):
     lang = state.language or "en"
     msg = MESSAGES[lang]
     
-    if query.data == "back":
-        state.waiting_for_link = False
-        await query.edit_message_text(msg["main_menu"], reply_markup=kb_main(lang))
-        return
+    if query.data == "action_link":
+        state.action = "send_link"
+        await query.edit_message_text(msg["enter_link"])
+    elif query.data == "action_search":
+        state.action = "search"
+        await query.edit_message_text(msg["enter_search"])
+
+async def handle_message(update, context):
+    """Handle link or search input"""
+    user_id = update.effective_user.id
+    state = get_user_state(user_id)
+    lang = state.language or "en"
+    msg = MESSAGES[lang]
+    text = update.message.text
     
-    if query.data == "do_search":
-        state.waiting_for_link = True
-        state.current_link = None
-        await query.edit_message_text("📝 أدخل اسم الفيديو:" if lang == "ar" else "📝 Enter video name:")
-    elif query.data == "do_link":
-        state.waiting_for_link = True
-        state.current_link = None
-        await query.edit_message_text("🔗 أرسل الرابط:" if lang == "ar" else "🔗 Send the link:")
+    # Check if link
+    is_link = any(x in text.lower() for x in ["http", "www.", ".com", ".be", ".to/", "fb.watch", "youtu.be", "vm.tiktok", "x.com", "twitter.com"])
+    
+    if is_link:
+        # User sent a link
+        state.current_link = text
+        state.platform = detect_platform(text)
+        state.current_video_id = None
+        await update.message.reply_text(msg["select_quality"], reply_markup=kb_quality(lang))
+    
+    elif state.action == "search":
+        # User searching - YouTube search
+        await update.message.reply_text("⏳ " + msg.get("search", "Searching") + "...")
+        results = await search_videos(text)
+        
+        if not results:
+            await update.message.reply_text(msg["no_results"])
+            return
+        
+        state.search_results = results
+        response = f'📋┃نتائج البحث لـ "{text}"\n\n' if lang == "ar" else f'📋┃Search results for "{text}"\n\n'
+        
+        for v in results[:5]:
+            response += f"🎬 {v['title']}\n"
+            response += f"👤 {v['channel']}\n\n"
+        
+        # Create buttons for each result
+        buttons = []
+        for v in results[:5]:
+            title = v['title'][:35] + "..." if len(v['title']) > 35 else v['title']
+            buttons.append([InlineKeyboardButton(f"▶️ {title}", callback_data=f"video_{v['video_id']}")])
+        
+        await update.message.reply_text(response, reply_markup=InlineKeyboardMarkup(buttons))
+    
+    elif state.action == "send_link":
+        # User typed something but not a link - ask for link
+        await update.message.reply_text(msg["enter_link"])
+    
+    else:
+        # Show main menu
+        await update.message.reply_text(msg["send_or_search"], reply_markup=kb_send_or_search(lang))
+
+async def video_callback(update, context):
+    """Handle video selection from search results"""
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+    state = get_user_state(user_id)
+    lang = state.language or "en"
+    
+    video_id = query.data.replace("video_", "")
+    state.current_video_id = video_id
+    state.current_link = None
+    state.platform = "youtube"
+    
+    await query.edit_message_text(MESSAGES[lang]["select_quality"], reply_markup=kb_quality(lang))
 
 async def quality_callback(update, context):
+    """Handle quality selection"""
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
@@ -248,18 +302,21 @@ async def quality_callback(update, context):
     if query.data == "back":
         state.current_link = None
         state.current_video_id = None
-        state.waiting_for_link = False
-        await query.edit_message_text(msg["main_menu"], reply_markup=kb_main(lang))
+        state.action = None
+        state.search_results = []
+        await query.edit_message_text(msg["send_or_search"], reply_markup=kb_send_or_search(lang))
         return
     
     is_mp3 = query.data == "convert_mp3"
     quality = "best"
-    if not is_mp3 and query.data != "download_best":
+    if not is_mp3:
         quality = query.data.replace("q_", "") + "p"
     
     await query.edit_message_text(msg["converting"] if is_mp3 else msg["downloading"])
     
-    url = state.current_link or (f"https://www.youtube.com/watch?v={state.current_video_id}" if state.current_video_id else None)
+    url = state.current_link
+    if not url and state.current_video_id:
+        url = f"https://www.youtube.com/watch?v={state.current_video_id}"
     
     if not url:
         await query.message.reply_text(msg["error"])
@@ -286,72 +343,6 @@ async def quality_callback(update, context):
         logger.error(f"Download exception: {e}")
         await query.message.reply_text(f"{msg['error']}: {str(e)}")
 
-async def handle_message(update, context):
-    user_id = update.effective_user.id
-    state = get_user_state(user_id)
-    lang = state.language or "en"
-    msg = MESSAGES[lang]
-    text = update.message.text
-    
-    if not state.waiting_for_link:
-        await update.message.reply_text(msg["main_menu"], reply_markup=kb_main(lang))
-        return
-    
-    is_link = any(x in text.lower() for x in ["http", "www.", ".com", ".be", ".to/", "fb.watch", "youtu.be", "vm.tiktok", "x.com", "twitter.com"])
-    
-    if is_link:
-        state.current_link = text
-        state.platform = detect_platform(text)
-        state.current_video_id = None
-        state.waiting_for_link = False
-        
-        if state.platform == "youtube":
-            await update.message.reply_text(msg["select_quality"], reply_markup=kb_quality_youtube(lang))
-        else:
-            if state.platform == "twitter":
-                msg_text = "🐦 Twitter/X"
-            elif state.platform == "tiktok":
-                msg_text = "🎵 TikTok"
-            elif state.platform == "facebook":
-                msg_text = "📘 Facebook"
-            elif state.platform == "instagram":
-                msg_text = "📸 Instagram"
-            else:
-                msg_text = msg["select_quality"]
-            await update.message.reply_text(msg_text, reply_markup=kb_download())
-    else:
-        state.waiting_for_link = False
-        await update.message.reply_text("⏳ " + msg.get("search", "Searching") + "...")
-        results = await search_videos(text)
-        
-        if not results:
-            await update.message.reply_text(msg["no_results"])
-            return
-        
-        response = f'📋┃{msg.get("search", "Search")} "{text}"\n\n'
-        for v in results[:5]:
-            response += f"🎬 {v['title']}\n👤 {v['channel']}\n🔗 /dl_{v['video_id']}\n\n"
-        
-        buttons = [[InlineKeyboardButton(f"▶️ {v['title'][:30]}...", callback_data=f"video_{v['video_id']}")] for v in results[:5]]
-        buttons.append([InlineKeyboardButton("⬅️ Back", callback_data="back")])
-        
-        await update.message.reply_text(response, reply_markup=InlineKeyboardMarkup(buttons))
-
-async def video_callback(update, context):
-    query = update.callback_query
-    await query.answer()
-    user_id = query.from_user.id
-    state = get_user_state(user_id)
-    lang = state.language or "en"
-    
-    video_id = query.data.replace("video_", "")
-    state.current_video_id = video_id
-    state.current_link = None
-    state.waiting_for_link = False
-    state.platform = "youtube"
-    
-    await query.edit_message_text(MESSAGES[lang]["select_quality"], reply_markup=kb_quality_youtube(lang))
-
 async def error_handler(update, context):
     logger.error(f"Error: {context.error}")
 
@@ -359,11 +350,9 @@ async def error_handler(update, context):
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start_command))
-    app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CommandHandler("language", language_command))
     app.add_handler(CallbackQueryHandler(lang_callback, pattern="^lang_"))
-    app.add_handler(CallbackQueryHandler(main_menu_callback, pattern="^(do_search|do_link|back)$"))
-    app.add_handler(CallbackQueryHandler(quality_callback, pattern="^(q_|convert_|download_)"))
+    app.add_handler(CallbackQueryHandler(action_callback, pattern="^action_"))
+    app.add_handler(CallbackQueryHandler(quality_callback, pattern="^(q_|convert_|back$)"))
     app.add_handler(CallbackQueryHandler(video_callback, pattern="^video_"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_error_handler(error_handler)
