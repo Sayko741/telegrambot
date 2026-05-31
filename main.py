@@ -126,7 +126,7 @@ async def msg_h(update, context):
                 os.remove(f)
                 await update.message.reply_text(MSG[l]['ok'])
             except Exception as e:
-                logger.error(f Send error: {e}')
+                logger.error(f'Send error: {e}')
                 await update.message.reply_text(MSG[l]['e'])
         else:
             await update.message.reply_text(MSG[l]['e'])
