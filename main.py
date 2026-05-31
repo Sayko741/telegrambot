@@ -91,7 +91,7 @@ def search_videos(query):
         logger.error(f'Search error: {e}')
         return []
 
-# ==================== START COMMAND ====================
+# ==================== HANDLERS ====================
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = get_user(update.effective_user.id)
     
@@ -100,32 +100,24 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text(MSG[user['lang']]['main'])
 
-# ==================== LANGUAGE CALLBACK ====================
 async def language_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
     user = get_user(query.from_user.id)
-    
-    if query.data == 'la':
-        user['lang'] = 'ar'
-    else:
-        user['lang'] = 'en'
+    user['lang'] = 'ar' if query.data == 'la' else 'en'
     
     await query.edit_message_text(MSG[user['lang']]['selected'])
     await query.message.reply_text(MSG[user['lang']]['main'])
 
-# ==================== MESSAGE HANDLER ====================
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = get_user(update.effective_user.id)
     lang = user.get('lang', 'en')
     text = update.message.text
     
-    # Check if link
     is_link = 'http' in text.lower() or 'www' in text.lower() or '.com' in text.lower() or '.be' in text.lower()
     
     if is_link:
-        # Download link immediately
         await update.message.reply_text(MSG[lang]['down'])
         
         file_path = download_file(text, mp3=False)
@@ -141,7 +133,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await update.message.reply_text(MSG[lang]['error'])
     else:
-        # Search
         await update.message.reply_text(MSG[lang]['search'])
         
         results = search_videos(text)
@@ -160,7 +151,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         await update.message.reply_text(message_text, reply_markup=InlineKeyboardMarkup(buttons))
 
-# ==================== VIDEO CALLBACK ====================
 async def video_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -169,12 +159,10 @@ async def video_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lang = user.get('lang', 'en')
     
     video_id = query.data.replace('vid_', '')
-    video_url = f'https://www.youtube.com/watch?v={video_id}'
-    user['url'] = video_url
+    user['url'] = f'https://www.youtube.com/watch?v={video_id}'
     
     await query.edit_message_text(MSG[lang]['select'], reply_markup=dl_keyboard())
 
-# ==================== DOWNLOAD CALLBACK ====================
 async def download_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -182,13 +170,6 @@ async def download_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = get_user(query.from_user.id)
     lang = user.get('lang', 'en')
     
-    # Back button pressed
-    if query.data == 'dl_video':
-        user['url'] = None
-        await query.edit_message_text(MSG[lang]['main'])
-        return
-    
-    # Video or MP3
     mp3 = (query.data == 'dl_mp3')
     url = user.get('url')
     
@@ -214,13 +195,12 @@ async def download_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await query.message.reply_text(MSG[lang]['error'])
 
-# ==================== ERROR HANDLER ====================
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.error(f'Error: {context.error}')
 
 # ==================== MAIN ====================
 def main():
-    app = Application.builder().token=BOT_TOKEN).build()
+    app = Application.builder().token(BOT_TOKEN).build()
     
     app.add_handler(CommandHandler('start', start_command))
     app.add_handler(CallbackQueryHandler(language_callback, pattern='^l[ae]$'))
