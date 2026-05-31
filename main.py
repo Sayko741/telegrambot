@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Telegram Bot - Simple Downloader"""
+"""Telegram Bot - Download from any platform"""
 
 import os
 import subprocess
@@ -17,25 +17,65 @@ users = {}
 
 def get_user(uid):
     if uid not in users:
-        users[uid] = {'lang': None, 'url': None}
+        users[uid] = {'lang': None, 'url': None, 'action': None}
     return users[uid]
 
 # ==================== MESSAGES ====================
 MSG = {
-    'ar': {'w': 'اختر لغتك:', 's': 'تم', 'm': 'ارسل رابط او ابحث:', 'd': 'تحميل...', 'ok': 'تم!', 'e': 'خطأ', 'n': 'لا نتائج', 'x': 'بحث...', 'p': 'اختر:'},
-    'en': {'w': 'Choose:', 's': 'Done', 'm': 'Link or search:', 'd': 'Downloading...', 'ok': 'Done!', 'e': 'Error', 'n': 'No results', 'x': 'Searching...', 'p': 'Select:'}
+    'ar': {
+        'welcome': 'مرحباً! اختر لغتك:',
+        'selected': 'تم اختيار اللغة',
+        'main': '📎 أرسل رابط للتحميل أو اكتب للبحث:',
+        'download': '⏳ جاري التحميل...',
+        'done': '✅ تم التحميل بنجاح!',
+        'error': '❌ حدث خطأ. تحقق من الرابط وحاول لاحقاً',
+        'no_results': '❌ لا توجد نتائج',
+        'searching': '⏳ جاري البحث...',
+        'select': '🎬 اختر صيغة التحميل:',
+        'send_link': '📎 أرسل الرابط:',
+        'send_search': '📎 اكتب اسم الفيديو للبحث:',
+        'help_title': '📌 طريقة الاستخدام:',
+        'help_text': '1️⃣ أرسل رابط للتحميل مباشرة\n2️⃣ اكتب اسم للبحث في يوتيوب\n3️⃣ اختر جودة التحميل\n\n📧 للمشاكل: mohamedeslammaklad700@gmail.com',
+        'link': '🔗 رابط',
+        'search': '🔍 بحث'
+    },
+    'en': {
+        'welcome': 'Hello! Choose language:',
+        'selected': 'Language selected',
+        'main': '📎 Send link to download or type to search:',
+        'download': '⏳ Downloading...',
+        'done': '✅ Downloaded successfully!',
+        'error': '❌ Error. Check link and try again',
+        'no_results': '❌ No results found',
+        'searching': '⏳ Searching...',
+        'select': '🎬 Select download format:',
+        'send_link': '📎 Send link:',
+        'send_search': '📎 Enter video name:',
+        'help_title': '📌 How to use:',
+        'help_text': '1️⃣ Send link to download\n2️⃣ Type name to search YouTube\n3️⃣ Select quality\n\n📧 For problems: mohamedeslammaklad700@gmail.com',
+        'link': '🔗 Link',
+        'search': '🔍 Search'
+    }
 }
 
+# ==================== KEYBOARDS ====================
 def kb_lang():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton('عربي', callback_data='la')],
-        [InlineKeyboardButton('English', callback_data='le')]
+        [InlineKeyboardButton('🇸🇦 العربية', callback_data='lang_ar')],
+        [InlineKeyboardButton('🇬🇧 English', callback_data='lang_en')]
+    ])
+
+def kb_main(lang):
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(MSG[lang]['link'], callback_data='btn_link')],
+        [InlineKeyboardButton(MSG[lang]['search'], callback_data='btn_search')]
     ])
 
 def kb_dl():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton('Video', callback_data='dv')],
-        [InlineKeyboardButton('MP3', callback_data='dm')]
+        [InlineKeyboardButton('📥 Video', callback_data='dl_video')],
+        [InlineKeyboardButton('🎵 MP3', callback_data='dl_mp3')],
+        [InlineKeyboardButton('⬅️ Back', callback_data='dl_back')]
     ])
 
 # ==================== DOWNLOAD ====================
@@ -92,22 +132,50 @@ def search_videos(query):
         logger.error(f'Search error: {e}')
         return []
 
-# ==================== HANDLERS ====================
+# ==================== COMMANDS ====================
+
+# /start
 async def start(update, context):
     u = get_user(update.effective_user.id)
     if u['lang'] is None:
-        await update.message.reply_text(MSG['ar']['w'], reply_markup=kb_lang())
+        await update.message.reply_text(MSG['ar']['welcome'], reply_markup=kb_lang())
     else:
-        await update.message.reply_text(MSG[u['lang']]['m'])
+        await update.message.reply_text(MSG[u['lang']]['main'], reply_markup=kb_main(u['lang']))
+
+# /help
+async def help_cmd(update, context):
+    u = get_user(update.effective_user.id)
+    l = u.get('lang', 'en')
+    await update.message.reply_text(MSG[l]['help_title'] + '\n\n' + MSG[l]['help_text'])
+
+# /language
+async def language_cmd(update, context):
+    await update.message.reply_text(MSG['ar']['welcome'], reply_markup=kb_lang())
+
+# ==================== CALLBACKS ====================
 
 async def lang_cb(update, context):
     q = update.callback_query
     await q.answer()
     u = get_user(q.from_user.id)
-    u['lang'] = 'ar' if q.data == 'la' else 'en'
-    await q.edit_message_text(MSG[u['lang']]['s'])
-    await q.message.reply_text(MSG[u['lang']]['m'])
+    u['lang'] = 'ar' if q.data == 'lang_ar' else 'en'
+    await q.edit_message_text(MSG[u['lang']]['selected'])
+    await q.message.reply_text(MSG[u['lang']]['main'], reply_markup=kb_main(u['lang']))
 
+async def btn_cb(update, context):
+    q = update.callback_query
+    await q.answer()
+    u = get_user(q.from_user.id)
+    l = u.get('lang', 'en')
+    
+    if q.data == 'btn_link':
+        u['action'] = 'link'
+        await q.edit_message_text(MSG[l]['send_link'])
+    elif q.data == 'btn_search':
+        u['action'] = 'search'
+        await q.edit_message_text(MSG[l]['send_search'])
+
+# ==================== MESSAGE HANDLER ====================
 async def msg_h(update, context):
     u = get_user(update.effective_user.id)
     l = u.get('lang', 'en')
@@ -115,8 +183,9 @@ async def msg_h(update, context):
     
     is_link = 'http' in txt.lower() or 'www' in txt.lower()
     
+    # If link sent (auto-download)
     if is_link:
-        await update.message.reply_text(MSG[l]['d'])
+        await update.message.reply_text(MSG[l]['download'])
         
         f = download_file(txt, mp3=False)
         
@@ -124,22 +193,24 @@ async def msg_h(update, context):
             try:
                 await update.message.reply_video(open(f, 'rb'))
                 os.remove(f)
-                await update.message.reply_text(MSG[l]['ok'])
+                await update.message.reply_text(MSG[l]['done'])
             except Exception as e:
                 logger.error(f'Send error: {e}')
-                await update.message.reply_text(MSG[l]['e'])
+                await update.message.reply_text(MSG[l]['error'])
         else:
-            await update.message.reply_text(MSG[l]['e'])
+            await update.message.reply_text(MSG[l]['error'])
+    
+    # If text (search)
     else:
-        await update.message.reply_text(MSG[l]['x'])
+        await update.message.reply_text(MSG[l]['searching'])
         
         r = search_videos(txt)
         
         if not r:
-            await update.message.reply_text(MSG[l]['n'])
+            await update.message.reply_text(MSG[l]['no_results'])
             return
         
-        txt_msg = f'Results for "{txt}":\n\n'
+        txt_msg = f'📋 Results for "{txt}":\n\n'
         btns = []
         
         for i, v in enumerate(r, 1):
@@ -157,7 +228,7 @@ async def vid_cb(update, context):
     vid = q.data.replace('v_', '')
     u['url'] = f'https://youtube.com/watch?v={vid}'
     
-    await q.edit_message_text(MSG[l]['p'], reply_markup=kb_dl())
+    await q.edit_message_text(MSG[l]['select'], reply_markup=kb_dl())
 
 async def dl_cb(update, context):
     q = update.callback_query
@@ -165,14 +236,20 @@ async def dl_cb(update, context):
     u = get_user(q.from_user.id)
     l = u.get('lang', 'en')
     
-    mp3 = (q.data == 'dm')
+    # Back button
+    if q.data == 'dl_back':
+        u['url'] = None
+        await q.edit_message_text(MSG[l]['main'], reply_markup=kb_main(l))
+        return
+    
+    mp3 = (q.data == 'dl_mp3')
     url = u.get('url')
     
     if not url:
-        await q.message.reply_text(MSG[l]['e'])
+        await q.message.reply_text(MSG[l]['error'])
         return
     
-    await q.edit_message_text(MSG[l]['d'])
+    await q.edit_message_text(MSG[l]['download'])
     
     f = download_file(url, mp3=mp3)
     
@@ -183,12 +260,12 @@ async def dl_cb(update, context):
             else:
                 await q.message.reply_video(open(f, 'rb'))
             os.remove(f)
-            await q.message.reply_text(MSG[l]['ok'])
+            await q.message.reply_text(MSG[l]['done'])
         except Exception as e:
             logger.error(f'Send error: {e}')
-            await q.message.reply_text(MSG[l]['e'])
+            await q.message.reply_text(MSG[l]['error'])
     else:
-        await q.message.reply_text(MSG[l]['e'])
+        await q.message.reply_text(MSG[l]['error'])
 
 async def err(update, context):
     logger.error(f'Error: {context.error}')
@@ -196,12 +273,22 @@ async def err(update, context):
 # ==================== MAIN ====================
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
+    
+    # Commands
     app.add_handler(CommandHandler('start', start))
-    app.add_handler(CallbackQueryHandler(lang_cb, pattern='^l[ae]$'))
+    app.add_handler(CommandHandler('help', help_cmd))
+    app.add_handler(CommandHandler('language', language_cmd))
+    
+    # Callbacks
+    app.add_handler(CallbackQueryHandler(lang_cb, pattern='^lang_'))
+    app.add_handler(CallbackQueryHandler(btn_cb, pattern='^btn_'))
     app.add_handler(CallbackQueryHandler(vid_cb, pattern='^v_'))
-    app.add_handler(CallbackQueryHandler(dl_cb, pattern='^d[vm]$'))
+    app.add_handler(CallbackQueryHandler(dl_cb, pattern='^dl_'))
+    
+    # Messages
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, msg_h))
     app.add_error_handler(err)
+    
     print('Bot running')
     app.run_polling()
 
