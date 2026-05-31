@@ -2,7 +2,7 @@
 npmConfig = ""
 
 [phases.build]
-command = "pip install -r requirements.txt"
+command = "pip install -r requirements.txt && apt-get install -y ffmpeg"
 
 [Start]
 run = "python main.py"
